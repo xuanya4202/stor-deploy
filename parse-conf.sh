@@ -325,5 +325,6 @@ function parse_stor_conf()
 }
 
 parse_def_conf stor-default.conf logs/test2 ""
+parse_stor_conf stor.conf logs/test2 ""
 
 fi
