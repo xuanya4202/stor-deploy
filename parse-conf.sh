@@ -144,8 +144,6 @@ function parse_def_conf()
     local comm_conf=""
     local curr_dir=""
 
-    local skip="true"
-
     cat $def_conf_file | while read line ; do
         line=`echo $line | sed 's/#.*$//'`
         line=`echo $line | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'`
@@ -157,7 +155,6 @@ function parse_def_conf()
             mkdir -p $curr_dir || return 1
             comm_conf=$curr_dir/common
             rm -fr $comm_conf
-            skip="false"
         elif [ "$line" = "[ZK_COMMON]" ] ; then
             if include_module "zk" "$modules" ; then
                 curr_dir=$dest/zk
@@ -165,9 +162,8 @@ function parse_def_conf()
                 comm_conf=$curr_dir/common
                 rm -fr $comm_conf
                 [ -f $dest/common ] && cp -f $dest/common $curr_dir
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_COMMON]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -176,9 +172,8 @@ function parse_def_conf()
                 comm_conf=$curr_dir/common
                 rm -fr $comm_conf
                 [ -f $dest/common ] && cp -f $dest/common $curr_dir
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         elif [ "$line" = "[HBASE_COMMON]" ] ; then
             if include_module "hbase" "$modules" ; then
@@ -187,12 +182,11 @@ function parse_def_conf()
                 comm_conf=$curr_dir/common
                 rm -fr $comm_conf
                 [ -f $dest/common ] && cp -f $dest/common $curr_dir
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         else
-            [ "$skip" = "true" ] && continue
+            [ -z "$curr_dir" ] && continue
 
             put_kv_in_map "$comm_conf" "$line"  # thie "" is necessary, because there may be spaces in $line
             local retCode=$?
@@ -218,10 +212,10 @@ function parse_stor_conf()
     local node_list=""
     local curr_dir=""
 
-    local all_nodes=$dest/all_nodes
-    rm -f $all_nodes
-
-    local skip="true"
+    local all_nodes=$dest/all-nodes
+    local hdfs_all_nodes=$dest/hdfs/all-nodes
+    local hbase_all_nodes=$dest/hbase/all-nodes
+    rm -f $all_nodes $hdfs_all_nodes $hbase_all_nodes
 
     cat $stor_conf_file | while read line ; do
         line=`echo $line | sed 's/#.*$//'`
@@ -234,7 +228,6 @@ function parse_stor_conf()
             mkdir -p $curr_dir || return 1
             comm_conf=$curr_dir/common
             node_list=""
-            skip="false"
         elif [ "$line" = "[ZK_COMMON]" ] ; then
             if include_module "zk" "$modules" ; then
                 curr_dir=$dest/zk
@@ -244,9 +237,8 @@ function parse_stor_conf()
                 if [ ! -f $comm_conf ] ; then
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         elif [ "$line" = "[ZK_NODES]" ] ; then
             if include_module "zk" "$modules" ; then
@@ -258,9 +250,8 @@ function parse_stor_conf()
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
                 rm -f $node_list
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_COMMON]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -271,9 +262,8 @@ function parse_stor_conf()
                 if [ ! -f $comm_conf ] ; then
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_NAME_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -285,9 +275,8 @@ function parse_stor_conf()
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
                 rm -f $node_list
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_DATA_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -299,9 +288,8 @@ function parse_stor_conf()
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
                 rm -f $node_list
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_JOURNAL_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -313,9 +301,8 @@ function parse_stor_conf()
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
                 rm -f $node_list
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_ZKFC_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -327,9 +314,8 @@ function parse_stor_conf()
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
                 rm -f $node_list
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         elif [ "$line" = "[HBASE_COMMON]" ] ; then
             if include_module "hbase" "$modules" ; then
@@ -340,9 +326,8 @@ function parse_stor_conf()
                 if [ ! -f $comm_conf ] ; then
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         elif [ "$line" = "[HBASE_MASTER_NODES]" ] ; then
             if include_module "hbase" "$modules" ; then
@@ -354,9 +339,8 @@ function parse_stor_conf()
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
                 rm -f $node_list
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         elif [ "$line" = "[HBASE_REGION_NODES]" ] ; then
             if include_module "hbase" "$modules" ; then
@@ -368,12 +352,11 @@ function parse_stor_conf()
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
                 rm -f $node_list
-                skip="false"
             else
-                skip="true"
+                $curr_dir=""
             fi
         else
-            [ "$skip" = "true" ] && continue
+            [ -z "$curr_dir" ] && continue
 
             if [ -z "$node_list" ] ; then # we are in [*COMMON] block; only $comm_conf is defined;
                 put_kv_in_map "$comm_conf" "$line"  # thie "" is necessary, because there may be spaces in $line
@@ -401,6 +384,8 @@ function parse_stor_conf()
 
                 echo $node >> $node_list
                 echo $node >> $all_nodes
+                [ "$dest/hdfs" = "$curr_dir" ] && echo $node >> $hdfs_all_nodes
+                [ "$dest/hbase" = "$curr_dir" ] && echo $node >> $hbase_all_nodes
 
                 if [ -n "$node_conf" ] ; then
                     local node_conf_file=$curr_dir/$node   #the node-conf-file is named $node, such as 192.168.100.131
@@ -433,6 +418,15 @@ function parse_stor_conf()
             fi
         fi
     done
+
+    # *nodes file may contain duplicated lines, dedup them!
+    local tmpFile=`mktemp --suffix=-stor-deploy.tmp`
+    for nodes_file in `find logs/ -name "*nodes" -type f` ; do
+        cat $nodes_file | sort | uniq > $tmpFile
+        mv -f $tmpFile $nodes_file
+    done
+
+    return 0
 }
 
 parse_def_conf stor-default.conf logs/test2 ""
