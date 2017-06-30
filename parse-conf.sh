@@ -14,6 +14,8 @@ function map_put()
     local map=$1
     local key=$2
     local val=$3
+    
+    log "INFO: Enter function map_put(): map=$map key=$key val=$val"
 
     [ ! -f $map ] && touch $map
 
@@ -24,6 +26,7 @@ function map_put()
         echo "$key=$val" >> $map || return 1
     fi
 
+    log "INFO: Exit function map_put(): Success"
     return 0
 }
 
@@ -33,6 +36,8 @@ function map_append()
     local key=$2
     local val=$3
 
+    log "INFO: Enter function map_append(): map=$map key=$key val=$val"
+
     [ ! -f $map ] && touch $map
 
     cat $map | grep "^$key=" > /dev/null 2>&1
@@ -41,6 +46,8 @@ function map_append()
     else
         echo "$key=$val" >> $map || return 1
     fi
+
+    log "INFO: Exit function map_append(): Success"
     return 0
 }
 
@@ -49,13 +56,15 @@ function include_module()
     local target=$1
     local modules=$2
 
-    [ -z "$modules" ] && return 0    # if modules is empty, return true;
+    log "INFO: Enter function include_module(): target=$target modules=$modules"
 
     echo $modules | grep $target > /dev/null 2>&1
     if [ $? -eq 0 ] ; then # $target is found in $modules, return true;
+        log "INFO: Exit function include_module(): $target included"
         return 0
     fi
 
+    log "INFO: Exit function include_module(): $target not Included"
     return 1
 }
 
@@ -68,9 +77,11 @@ function put_kv_in_map()
     local map=$1
     local line=$2
 
+    log "INFO: Enter function put_kv_in_map(): map=$map line=\"$line\""
+
     echo $line | grep "=" > /dev/null 2>&1
     if [ $? -ne 0 ] ; then
-        log "WARN: put_kv_in_map(): no '=' found. line=\"$line\""
+        log "WARN: Exit function put_kv_in_map(): no '=' found in line. line=\"$line\""
         return 2
     fi
 
@@ -83,16 +94,17 @@ function put_kv_in_map()
     key=`echo $key | sed -e 's/[[:space:]]*:[[:space:]]*/:/'`      # " : " => ":"
 
     if [ -z "$key" -o -z "$val" ] ; then
-        log "WARN: put_kv_in_map(): key or val is empty. line=\"$line\" key=\"$key\" val=\"$val\""
+        log "WARN: Exit function put_kv_in_map(): key or val is empty. line=\"$line\" key=\"$key\" val=\"$val\""
         return 2
     fi
 
     map_put "$map" "$key" "$val"   # the "" is necessary, because key/val may contain spaces
     if [ $? -ne 0 ] ; then
-        log "ERROR: put_kv_in_map(): failed to put key-val in map. key=\"$key\" val=\"$val\" map=\"$map\""
+        log "ERROR: Exit function put_kv_in_map(): failed to put key-val in map. key=\"$key\" val=\"$val\" map=\"$map\""
         return 1
     fi
 
+    log "INFO: Exit function put_kv_in_map(): Success"
     return 0
 }
 
@@ -106,9 +118,11 @@ function append_kv_in_map()
     local map=$1
     local line=$2
 
+    log "INFO: Enter function append_kv_in_map(): map=$map line=\"$line\""
+
     echo $line | grep "=" > /dev/null 2>&1
     if [ $? -ne 0 ] ; then
-        log "WARN: append_kv_in_map(): no '=' found. line=\"$line\""
+        log "WARN: Exit function append_kv_in_map(): no '=' found. line=\"$line\""
         return 2
     fi
 
@@ -121,16 +135,17 @@ function append_kv_in_map()
     key=`echo $key | sed -e 's/[[:space:]]*:[[:space:]]*/:/'`      # " : " => ":"
 
     if [ -z "$key" -o -z "$val" ] ; then
-        log "WARN: append_kv_in_map(): key or val is empty. line=\"$line\" key=\"$key\" val=\"$val\""
+        log "WARN: Exit function append_kv_in_map(): key or val is empty. line=\"$line\" key=\"$key\" val=\"$val\""
         return 2
     fi
 
     map_append "$map" "$key" "$val"   # the "" is necessary, because key/val may contain spaces
     if [ $? -ne 0 ] ; then
-        log "ERROR: append_kv_in_map(): failed to put key-val in map. key=\"$key\" val=\"$val\" map=\"$map\""
+        log "ERROR: Exit function append_kv_in_map(): failed to put key-val in map. key=\"$key\" val=\"$val\" map=\"$map\""
         return 1
     fi
 
+    log "INFO: Exit function append_kv_in_map(): Success"
     return 0
 }
 
@@ -140,6 +155,8 @@ function parse_def_conf()
     local def_conf_file=$1      #default conf file
     local dest=$2               #the dest dir
     local modules=$3
+
+    log "INFO: Enter function parse_def_conf(): def_conf_file=$def_conf_file dest=$dest modules=$modules"
 
     local comm_conf=""
     local curr_dir=""
@@ -151,54 +168,63 @@ function parse_def_conf()
 
         #start a block;
         if [ "$line" = "[COMMON]" ] ; then
+            log "INFO: in function parse_def_conf(): enter [COMMON] block"
             curr_dir=$dest
             mkdir -p $curr_dir || return 1
             comm_conf=$curr_dir/common
-            rm -fr $comm_conf
+            rm -fr $comm_conf || return 1
         elif [ "$line" = "[ZK_COMMON]" ] ; then
             if include_module "zk" "$modules" ; then
+                log "INFO: in function parse_def_conf(): enter [ZK_COMMON] block"
                 curr_dir=$dest/zk
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
-                rm -fr $comm_conf
+                rm -fr $comm_conf || return 1
                 [ -f $dest/common ] && cp -f $dest/common $curr_dir
             else
+                log "INFO: in function parse_def_conf(): skip [ZK_COMMON] block"
                 $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_COMMON]" ] ; then
             if include_module "hdfs" "$modules" ; then
+                log "INFO: in function parse_def_conf(): enter [HDFS_COMMON] block"
                 curr_dir=$dest/hdfs
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
-                rm -fr $comm_conf
+                rm -fr $comm_conf || return 1
                 [ -f $dest/common ] && cp -f $dest/common $curr_dir
             else
+                log "INFO: in function parse_def_conf(): skip [HDFS_COMMON] block"
                 $curr_dir=""
             fi
         elif [ "$line" = "[HBASE_COMMON]" ] ; then
             if include_module "hbase" "$modules" ; then
+                log "INFO: in function parse_def_conf(): enter [HBASE_COMMON] block"
                 curr_dir=$dest/hbase
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
-                rm -fr $comm_conf
+                rm -fr $comm_conf || return 1
                 [ -f $dest/common ] && cp -f $dest/common $curr_dir
             else
+                log "INFO: in function parse_def_conf(): skip [HBASE_COMMON] block"
                 $curr_dir=""
             fi
         else
             [ -z "$curr_dir" ] && continue
 
             put_kv_in_map "$comm_conf" "$line"  # thie "" is necessary, because there may be spaces in $line
+
             local retCode=$?
             if [ $retCode -eq 1 ] ; then
-                log "ERROR: parse_def_conf(): put_kv_in_map failed. def_conf_file=$def_conf_file"
+                log "ERROR: Exit function parse_def_conf(): put_kv_in_map failed. def_conf_file=$def_conf_file"
                 return 1
             elif [ $retCode -eq 2 ] ; then
-                log "WARN: parse_def_conf(): put_kv_in_map succeeded with warnning. def_conf_file=$def_conf_file"
+                log "WARN: in function parse_def_conf(): put_kv_in_map succeeded with warnning. def_conf_file=$def_conf_file"
             fi
         fi
     done
 
+    log "INFO: Exit function parse_def_conf(): success"
     return 0
 }
 
@@ -208,6 +234,8 @@ function parse_stor_conf()
     local dest=$2                #the dest dir
     local modules=$3
 
+    log "INFO: Enter function parse_stor_conf(): stor_conf_file=$stor_conf_file dest=$dest modules=$modules"
+
     local comm_conf=""
     local node_list=""
     local curr_dir=""
@@ -215,7 +243,7 @@ function parse_stor_conf()
     local all_nodes=$dest/all-nodes
     local hdfs_all_nodes=$dest/hdfs/all-nodes
     local hbase_all_nodes=$dest/hbase/all-nodes
-    rm -f $all_nodes $hdfs_all_nodes $hbase_all_nodes
+    rm -f $all_nodes $hdfs_all_nodes $hbase_all_nodes || return 1
 
     cat $stor_conf_file | while read line ; do
         line=`echo $line | sed 's/#.*$//'`
@@ -224,12 +252,14 @@ function parse_stor_conf()
 
         #start a block;
         if [ "$line" = "[COMMON]" ] ; then
+            log "INFO: in function parse_stor_conf(): enter [COMMON] block"
             curr_dir=$dest
             mkdir -p $curr_dir || return 1
             comm_conf=$curr_dir/common
             node_list=""
         elif [ "$line" = "[ZK_COMMON]" ] ; then
             if include_module "zk" "$modules" ; then
+                log "INFO: in function parse_stor_conf(): enter [ZK_COMMON] block"
                 curr_dir=$dest/zk
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
@@ -238,10 +268,12 @@ function parse_stor_conf()
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
             else
+                log "INFO: in function parse_stor_conf(): skip [ZK_COMMON] block"
                 $curr_dir=""
             fi
         elif [ "$line" = "[ZK_NODES]" ] ; then
             if include_module "zk" "$modules" ; then
+                log "INFO: in function parse_stor_conf(): enter [ZK_NODES] block"
                 curr_dir=$dest/zk
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
@@ -249,12 +281,14 @@ function parse_stor_conf()
                 if [ ! -f $comm_conf ] ; then
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
-                rm -f $node_list
+                rm -f $node_list || return 1
             else
+                log "INFO: in function parse_stor_conf(): skip [ZK_NODES] block"
                 $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_COMMON]" ] ; then
             if include_module "hdfs" "$modules" ; then
+                log "INFO: in function parse_stor_conf(): enter [HDFS_COMMON] block"
                 curr_dir=$dest/hdfs
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
@@ -263,10 +297,12 @@ function parse_stor_conf()
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
             else
+                log "INFO: in function parse_stor_conf(): skip [HDFS_COMMON] block"
                 $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_NAME_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
+                log "INFO: in function parse_stor_conf(): enter [HDFS_NAME_NODES] block"
                 curr_dir=$dest/hdfs
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
@@ -274,12 +310,14 @@ function parse_stor_conf()
                 if [ ! -f $comm_conf ] ; then
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
-                rm -f $node_list
+                rm -f $node_list || return 1
             else
+                log "INFO: in function parse_stor_conf(): skip [HDFS_NAME_NODES] block"
                 $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_DATA_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
+                log "INFO: in function parse_stor_conf(): enter [HDFS_DATA_NODES] block"
                 curr_dir=$dest/hdfs
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
@@ -287,12 +325,14 @@ function parse_stor_conf()
                 if [ ! -f $comm_conf ] ; then
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
-                rm -f $node_list
+                rm -f $node_list || return 1
             else
+                log "INFO: in function parse_stor_conf(): skip [HDFS_DATA_NODES] block"
                 $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_JOURNAL_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
+                log "INFO: in function parse_stor_conf(): enter [HDFS_JOURNAL_NODES] block"
                 curr_dir=$dest/hdfs
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
@@ -300,12 +340,14 @@ function parse_stor_conf()
                 if [ ! -f $comm_conf ] ; then
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
-                rm -f $node_list
+                rm -f $node_list || return 1
             else
+                log "INFO: in function parse_stor_conf(): skip [HDFS_JOURNAL_NODES] block"
                 $curr_dir=""
             fi
         elif [ "$line" = "[HDFS_ZKFC_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
+                log "INFO: in function parse_stor_conf(): enter [HDFS_ZKFC_NODES] block"
                 curr_dir=$dest/hdfs
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
@@ -313,12 +355,14 @@ function parse_stor_conf()
                 if [ ! -f $comm_conf ] ; then
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
-                rm -f $node_list
+                rm -f $node_list || return 1
             else
+                log "INFO: in function parse_stor_conf(): skip [HDFS_ZKFC_NODES] block"
                 $curr_dir=""
             fi
         elif [ "$line" = "[HBASE_COMMON]" ] ; then
             if include_module "hbase" "$modules" ; then
+                log "INFO: in function parse_stor_conf(): enter [HBASE_COMMON] block"
                 curr_dir=$dest/hbase
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
@@ -327,10 +371,12 @@ function parse_stor_conf()
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
             else
+                log "INFO: in function parse_stor_conf(): skip [HBASE_COMMON] block"
                 $curr_dir=""
             fi
         elif [ "$line" = "[HBASE_MASTER_NODES]" ] ; then
             if include_module "hbase" "$modules" ; then
+                log "INFO: in function parse_stor_conf(): enter [HBASE_MASTER_NODES] block"
                 curr_dir=$dest/hbase
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
@@ -338,12 +384,14 @@ function parse_stor_conf()
                 if [ ! -f $comm_conf ] ; then
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
-                rm -f $node_list
+                rm -f $node_list || return 1
             else
+                log "INFO: in function parse_stor_conf(): skip [HBASE_MASTER_NODES] block"
                 $curr_dir=""
             fi
         elif [ "$line" = "[HBASE_REGION_NODES]" ] ; then
             if include_module "hbase" "$modules" ; then
+                log "INFO: in function parse_stor_conf(): enter [HBASE_REGION_NODES] block"
                 curr_dir=$dest/hbase
                 mkdir -p $curr_dir || return 1
                 comm_conf=$curr_dir/common
@@ -351,8 +399,9 @@ function parse_stor_conf()
                 if [ ! -f $comm_conf ] ; then
                     [ -f $dest/common ] && cp -f $dest/common $curr_dir
                 fi
-                rm -f $node_list
+                rm -f $node_list || return 1
             else
+                log "INFO: in function parse_stor_conf(): skip [HBASE_REGION_NODES] block"
                 $curr_dir=""
             fi
         else
@@ -362,10 +411,10 @@ function parse_stor_conf()
                 put_kv_in_map "$comm_conf" "$line"  # thie "" is necessary, because there may be spaces in $line
                 local retCode=$?
                 if [ $retCode -eq 1 ] ; then
-                    log "ERROR: parse_def_conf(): put_kv_in_map failed. stor_conf_file=$stor_conf_file"
+                    log "ERROR: Exit function parse_def_conf(): put_kv_in_map failed. stor_conf_file=$stor_conf_file"
                     return 1
                 elif [ $retCode -eq 2 ] ; then
-                    log "WARN: parse_def_conf(): put_kv_in_map succeeded with warnning. stor_conf_file=$stor_conf_file"
+                    log "WARN: in function parse_def_conf(): put_kv_in_map succeeded with warnning. stor_conf_file=$stor_conf_file"
                 fi
             else  # we are in [*NODES] block; both $comm_conf and $node_list are defined;
                 local node=""
@@ -382,8 +431,9 @@ function parse_stor_conf()
                     node=$line
                 fi
 
-                echo $node >> $node_list
-                echo $node >> $all_nodes
+                echo $node >> $node_list || return 1
+                echo $node >> $all_nodes || return 1
+
                 [ "$dest/hdfs" = "$curr_dir" ] && echo $node >> $hdfs_all_nodes
                 [ "$dest/hbase" = "$curr_dir" ] && echo $node >> $hbase_all_nodes
 
@@ -410,8 +460,22 @@ function parse_stor_conf()
                         if [ $? -eq 0 ] ; then  # there is leading "extra:", so append the value to the key;
                             kv_pair=`echo "$kv_pair" | sed -e 's/extra[[:space:]]*:[[:space:]]*//'`   #chop the leading "extra:"
                             append_kv_in_map "$node_conf_file" "$kv_pair"    # thie "" is necessary, because there may be spaces in $kv_pair
+                            local retCode=$?
+                            if [ $retCode -eq 1 ] ; then
+                                log "ERROR: Exit function parse_stor_conf(): append_kv_in_map failed. stor_conf_file=$stor_conf_file"
+                                return 1
+                            elif [ $retCode -eq 2 ] ; then
+                                log "WARN: in function parse_stor_conf(): append_kv_in_map succeeded with warnning. stor_conf_file=$stor_conf_file"
+                            fi
                         else #there is no leading "extra:", replace the key with the new value;
                             put_kv_in_map "$node_conf_file" "$kv_pair"    # thie "" is necessary, because there may be spaces in $kv_pair
+                            local retCode=$?
+                            if [ $retCode -eq 1 ] ; then
+                                log "ERROR: Exit function parse_stor_conf(): put_kv_in_map failed. stor_conf_file=$stor_conf_file"
+                                return 1
+                            elif [ $retCode -eq 2 ] ; then
+                                log "WARN: in function parse_stor_conf(): put_kv_in_map succeeded with warnning. stor_conf_file=$stor_conf_file"
+                            fi
                         fi
                     done
                 fi
@@ -421,15 +485,62 @@ function parse_stor_conf()
 
     # *nodes file may contain duplicated lines, dedup them!
     local tmpFile=`mktemp --suffix=-stor-deploy.tmp`
-    for nodes_file in `find logs/ -name "*nodes" -type f` ; do
-        cat $nodes_file | sort | uniq > $tmpFile
-        mv -f $tmpFile $nodes_file
+    for nodes_file in `find $dest -name "*nodes" -type f` ; do
+        log "INFO: in function parse_stor_conf(): deduplicate $nodes_file"
+        cat $nodes_file | sort | uniq > $tmpFile || return 1
+        mv -f $tmpFile $nodes_file || return 1
     done
 
+    log "INFO: Exit function parse_stor_conf(): Success"
     return 0
 }
 
-parse_def_conf stor-default.conf logs/test2 ""
-parse_stor_conf stor.conf logs/test2 ""
+function parse_configuration()
+{
+    local def_conf=$1
+    local conf=$2
+    local dest_dir=$3
+    local modules=$4
+
+    log "INFO: Enter function parse_configuration(): def_conf=$def_conf conf=$conf dest_dir=$dest_dir modules=$modules"
+
+    if [ -z "$def_conf" -o -z "$conf" -o -z "$dest_dir" -o -z "$modules" ] ; then
+        log "ERROR: Exit function parse_configuration(): one or more parameters is missing"
+        return 1
+    fi
+
+    if [ ! -f $def_conf ] ; then
+        log "ERROR: Exit function parse_configuration(): default config file $def_conf doesn't exist"
+        return 1
+    fi
+
+    if [ ! -f $conf ] ; then
+        log "ERROR: Exit function parse_configuration(): config file $conf doesn't exist"
+        return 1
+    fi
+
+    if [ -f $dest_dir ] ; then
+        log "ERROR: Exit function parse_configuration(): dest dir $dest_dir exists and it's a file"
+        return 1
+    fi
+
+    rm -fr $dest_dir  || return 1
+    mkdir -p $dest_dir || return 1
+
+    parse_def_conf "$def_conf" "$dest_dir" "$modules"
+    if [ $? -ne 0 ] ; then
+        log "ERROR: Exit function parse_configuration(): parse_def_conf failed"
+        return 1
+    fi
+
+    parse_stor_conf "$conf" "$dest_dir" "$modules"
+    if [ $? -ne 0 ] ; then
+        log "ERROR: Exit function parse_configuration(): parse_stor_conf failed"
+        return 1
+    fi
+
+    log "INFO: Exit function parse_configuration(): Success"
+    return 0
+}
 
 fi
