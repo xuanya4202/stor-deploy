@@ -1,15 +1,15 @@
 #!/bin/bash
 
-BIN="${BASH_SOURCE-$0}"
-BIN_PDIR="$(dirname "${BIN}")"
-BIN_PDIR="$(cd "${BIN_PDIR}"; pwd)"
+SCRIPT="${BASH_SOURCE-$0}"
+SCRIPT_PDIR="$(dirname "${SCRIPT}")"
+SCRIPT_PDIR="$(cd "${SCRIPT_PDIR}"; pwd)"
 
-LOGS=$BIN_PDIR/logs
+LOGS=$SCRIPT_PDIR/logs
 mkdir -p $LOGS
 LOG_FILE=$LOGS/deploy.log
 
-. $BIN_PDIR/tools.sh
-. $BIN_PDIR/parse-conf.sh
+. $SCRIPT_PDIR/tools.sh
+. $SCRIPT_PDIR/parse-conf.sh
 
 timestamp=`date +%Y-%m-%d-%H-%M-%S`
 
