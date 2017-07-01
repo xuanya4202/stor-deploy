@@ -26,11 +26,11 @@ function umount_dev()
     local mntpoint=$5
 
     log "INFO: Enter umount_dev(): node=$node user=$user ssh_port=$ssh_port"
-    log "INFO:     device=$device"
-    log "INFO:     mntpoint=$mntpoint"
+    log "INFO:       device=$device"
+    log "INFO:       mntpoint=$mntpoint"
 
     local SSH="ssh -p $ssh_port $user@$node"
-    local sshErr=`mktemp --suffix=-stor-deploy.umount`
+    local sshErr=`mktemp --suffix=-stor-deploy.umount_dev`
 
     $SSH umount $device > $sshErr 2>&1
     if [ -s $sshErr ] ; then
@@ -41,24 +41,25 @@ function umount_dev()
         fi
     fi
 
-    $SSH umount $mntpoint  > $sshErr 2>&1 
+    $SSH umount $mntpoint > $sshErr 2>&1
     if [ -s $sshErr ] ; then
         cat $sshErr | grep "not mounted" > /dev/null 2>&1
         if [ $? -ne 0 ] ; then   # didn't found 'not mounted'
-            log "ERROR: Exit umount_dev(): failed to umount $mntpoint See $sshErr for details"
+            log "ERROR: Exit umount_dev(): failed to umount $mntpoint. See $sshErr for details"
             return 1
         fi
     fi
 
     #remove the device from /fstab
-    $SSH sed -i -e "\#$device#d" /etc/fstab 2> $sshErr
+    $SSH sed -i -e \'"\#$device#d"\' /etc/fstab 2> $sshErr
     if [ -s $sshErr ] ; then
         log "ERROR: Exit umount_dev(): failed to remove $device from fstab. See $sshErr for details"
         return 1
     fi
 
-    #remove the uuid of the device from /fstab
+    #remove the uuid of the device from /etc/fstab
     local uuid=`$SSH blkid $device 2> $sshErr | grep -w UUID | sed -e 's/.*\<UUID\>="\([-0-9a-fA-F]*\)".*/\1/'`
+    log "INFO: in umount_dev(): uuid of $device is \"$uuid\""
     if [ -s $sshErr ] ; then
         log "ERROR: Exit umount_dev(): failed to get uuid of $device on $node. See $sshErr for details"
         return 1
@@ -67,7 +68,7 @@ function umount_dev()
     if [ -n "$uuid" ] ; then
         $SSH sed -i -e "/$uuid/d" /etc/fstab 2> $sshErr
         if [ -s $sshErr ] ; then
-            log "ERROR: Exit umount_dev(): failed to remove uuid ($uuid) of $device from fstab. See $sshErr for details"
+            log "ERROR: Exit umount_dev(): failed to remove uuid of $device from fstab. See $sshErr for details"
             return 1
         fi
     fi
@@ -75,6 +76,92 @@ function umount_dev()
     rm -f $sshErr
 
     log "INFO: Exit umount_dev(): Success"
+    return 0
+}
+
+function format_dev()
+{
+    local node=$1
+    local user=$2
+    local ssh_port=$3
+    local device=$4
+    local mkfs_cmd=$5
+
+    log "INFO: Enter format_dev(): node=$node user=$user ssh_port=$ssh_port"
+    log "INFO:       device=$device"
+    log "INFO:       mkfs_cmd=$mkfs_cmd"
+
+    local SSH="ssh -p $ssh_port $user@$node"
+    local sshErr=`mktemp --suffix=-stor-deploy.format_dev`
+
+    $SSH $mkfs_cmd $device 2> $sshErr
+    if [ -s $sshErr ] ; then
+        log "ERROR: Exit format_dev(): failed to format $device on $node. See $sshErr for details"
+        return 1
+    fi
+
+    rm -f $sshErr
+
+    log "INFO: Exit format_dev(): Success"
+    return 0
+}
+
+function mount_dev()
+{
+    local node=$1
+    local user=$2
+    local ssh_port=$3
+    local device=$4
+    local mntpoint=$5
+    local fs_type=$6
+    local mount_opts=$7
+
+    log "INFO: Enter mount_dev(): node=$node user=$user ssh_port=$ssh_port"
+    log "INFO:       device=$device"
+    log "INFO:       mntpoint=$mntpoint"
+    log "INFO:       fs_type=$fs_type"
+    log "INFO:       mount_opts=$mount_opts"
+
+    local SSH="ssh -p $ssh_port $user@$node"
+    local sshErr=`mktemp --suffix=-stor-deploy.mount_dev`
+
+    $SSH mount $device $mntpoint -o $mount_opts 2> $sshErr 
+    if [ -s $sshErr ] ; then
+        log "ERROR: Exit mount_dev(): failed to mount $device on $mntpoint on $node. See $sshErr for details"
+        return 1
+    fi
+
+    #add the mount in /etc/fstab, by uuid.
+    local uuid=`$SSH blkid $device 2> $sshErr | grep -w UUID | sed -e 's/.*\<UUID\>="\([-0-9a-fA-F]*\)".*/\1/'`
+    log "INFO: in mount_dev(): uuid of $device is \"$uuid\""
+    if [ -s $sshErr ] ; then
+        log "ERROR: Exit mount_dev(): failed to get uuid of $device on $node. See $sshErr for details"
+        return 1
+    fi
+
+    if [ -z "$uuid" ] ; then
+        log "ERROR: Exit mount_dev(): uuid of $device is empty"
+        return 1
+    fi
+
+    #try to remove original mount;
+    $SSH sed -i -e "/$uuid/d" /etc/fstab 2> $sshErr
+    if [ -s $sshErr ] ; then
+        log "ERROR: Exit mount_dev(): failed to remove uuid of $device from fstab. See $sshErr for details"
+        return 1
+    fi
+
+    #add the mount;
+    local new_mnt="UUID=$uuid    $mntpoint    $fs_type    $mount_opts    0    0"
+    $SSH sed -i -e \'"$ a $new_mnt"\' /etc/fstab 2> $sshErr
+    if [ -s $sshErr ] ; then
+        log "ERROR: Exit mount_dev(): failed to add mount into fstab. See $sshErr for details"
+        return 1
+    fi
+
+    rm -f $sshErr
+
+    log "INFO: Exit mount_dev(): Success"
     return 0
 }
 
@@ -88,12 +175,27 @@ function do_mounts()
     local mkfs_cmd=$6
 
     log "INFO: Enter do_mounts(): node=$node user=$user ssh_port=$ssh_port"
-    log "INFO:     mounts=$mounts"
-    log "INFO:     mount_opts=$mount_opts"
-    log "INFO:     mkfs_cmd=$mkfs_cmd"
+    log "INFO:       mounts=$mounts"
+    log "INFO:       mount_opts=$mount_opts"
+    log "INFO:       mkfs_cmd=$mkfs_cmd"
 
-    local SSH="ssh -p $ssh_port $user@$node"
-    local sshErr=`mktemp --suffix=-stor-deploy.domounts`
+    local fs_type=""
+
+    #Yuanguo: for now, only mkfs.ext4 and mkfs.xfs are supported 
+    echo "$mkfs_cmd" | grep "mkfs.ext4" > /dev/null 2>&1
+    if [ $? -eq 0 ] ; then   #ext4
+        mkfs_cmd="$mkfs_cmd -F -q"
+        fs_type="ext4"
+    else
+        echo "$mkfs_cmd" | grep "mkfs.xfs" > /dev/null 2>&1
+        if [ $? -eq 0 ] ; then   #xfs
+            mkfs_cmd="$mkfs_cmd -f"
+            fs_type="xfs"
+        else
+            log "ERROR: Exit do_mounts(): only mkfs.ext4 and mkfs.xfs are supported for now. mkfs_cmd=$mkfs_cmd"
+            return 1
+        fi
+    fi
 
     while [ -n "$mounts" ] ; do
         local one_mnt=""
@@ -110,6 +212,8 @@ function do_mounts()
             mounts=""
         fi
 
+        log "INFO: in do_mounts(): got a mount config: $one_mnt"
+
         local device=`echo $one_mnt | cut -d ':' -f 1`
         local mntpoint=`echo $one_mnt | cut -d ':' -f 2`
 
@@ -121,17 +225,27 @@ function do_mounts()
             return 1
         fi
 
-    done
+        umount_dev "$node" "$user" "$ssh_port" "$device" "$mntpoint"
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit do_mounts(): umount_dev failed. node=$node device=$device mntpoint=$mntpoint"
+            return 1
+        fi
 
-    rm -f $sshErr
+        format_dev "$node" "$user" "$ssh_port" "$device" "$mkfs_cmd"
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit do_mounts(): format_dev failed. node=$node device=$device mkfs_cmd=$mkfs_cmd"
+            return 1
+        fi
+
+        mount_dev "$node" "$user" "$ssh_port" "$device" "$mntpoint" "$fs_type" "$mount_opts"
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit do_mounts(): mount_dev failed. node=$node device=$device mntpoint=$mntpoint mount_opts=$mount_opts"
+            return 1
+        fi
+    done
 
     log "INFO: Exit do_mounts(): Success"
     return 0
 }
-
-
-umount_dev 192.168.100.132 root 22 /dev/sdd1 /home/watermelon
-
-
 
 fi
