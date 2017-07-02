@@ -408,14 +408,32 @@ function parse_stor_conf()
             [ -z "$curr_dir" ] && continue
 
             if [ -z "$node_list" ] ; then # we are in [*COMMON] block; only $comm_conf is defined;
-                put_kv_in_map "$comm_conf" "$line"  # thie "" is necessary, because there may be spaces in $line
-                local retCode=$?
-                if [ $retCode -eq 1 ] ; then
-                    log "ERROR: Exit function parse_def_conf(): put_kv_in_map failed. stor_conf_file=$stor_conf_file"
-                    return 1
-                elif [ $retCode -eq 2 ] ; then
-                    log "WARN: in function parse_def_conf(): put_kv_in_map succeeded with warnning. stor_conf_file=$stor_conf_file"
+
+                if [ "$curr_dir" = "$dest" ] ; then
+                    # we are in [COMMON] block of stor.conf. Notice that this block should overwrite all
+                    # [*COMMON] blocks in stor-default.conf.
+                    for mapfile in `find $dest -name "common" -type f` ; do
+                        put_kv_in_map "$mapfile" "$line"  # thie "" is necessary, because there may be spaces in $line
+                        local retCode=$?
+                        if [ $retCode -eq 1 ] ; then
+                            log "ERROR: Exit function parse_stor_conf(): put_kv_in_map failed. mapfile=$mapfile line=$line"
+                            return 1
+                        elif [ $retCode -eq 2 ] ; then
+                            log "WARN: in function parse_stor_conf(): put_kv_in_map succeeded with warnning. mapfile=$mapfile line=$line"
+                        fi
+                    done
+                else
+                    # we are in [*_COMMON] block of stor.conf
+                    put_kv_in_map "$comm_conf" "$line"  # thie "" is necessary, because there may be spaces in $line
+                    local retCode=$?
+                    if [ $retCode -eq 1 ] ; then
+                        log "ERROR: Exit function parse_stor_conf(): put_kv_in_map failed. comm_conf=$comm_conf line=$line"
+                        return 1
+                    elif [ $retCode -eq 2 ] ; then
+                        log "WARN: in function parse_stor_conf(): put_kv_in_map succeeded with warnning comm_conf=$comm_conf line=$line"
+                    fi
                 fi
+
             else  # we are in [*NODES] block; both $comm_conf and $node_list are defined;
                 local node=""
                 local node_conf=""
@@ -462,19 +480,19 @@ function parse_stor_conf()
                             append_kv_in_map "$node_conf_file" "$kv_pair"    # thie "" is necessary, because there may be spaces in $kv_pair
                             local retCode=$?
                             if [ $retCode -eq 1 ] ; then
-                                log "ERROR: Exit function parse_stor_conf(): append_kv_in_map failed. stor_conf_file=$stor_conf_file"
+                                log "ERROR: Exit function parse_stor_conf(): append_kv_in_map failed. node_conf_file=$node_conf_file kv_pair=$kv_pair"
                                 return 1
                             elif [ $retCode -eq 2 ] ; then
-                                log "WARN: in function parse_stor_conf(): append_kv_in_map succeeded with warnning. stor_conf_file=$stor_conf_file"
+                                log "WARN: in function parse_stor_conf(): append_kv_in_map succeeded with warnning. node_conf_file=$node_conf_file kv_pair=$kv_pair"
                             fi
                         else #there is no leading "extra:", replace the key with the new value;
                             put_kv_in_map "$node_conf_file" "$kv_pair"    # thie "" is necessary, because there may be spaces in $kv_pair
                             local retCode=$?
                             if [ $retCode -eq 1 ] ; then
-                                log "ERROR: Exit function parse_stor_conf(): put_kv_in_map failed. stor_conf_file=$stor_conf_file"
+                                log "ERROR: Exit function parse_stor_conf(): put_kv_in_map failed. node_conf_file=$node_conf_file kv_pair=$kv_pair"
                                 return 1
                             elif [ $retCode -eq 2 ] ; then
-                                log "WARN: in function parse_stor_conf(): put_kv_in_map succeeded with warnning. stor_conf_file=$stor_conf_file"
+                                log "WARN: in function parse_stor_conf(): put_kv_in_map succeeded with warnning. node_conf_file=$node_conf_file kv_pair=$kv_pair"
                             fi
                         fi
                     done

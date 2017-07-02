@@ -43,7 +43,7 @@ function umount_dev()
 
     $SSH umount $mntpoint > $sshErr 2>&1
     if [ -s $sshErr ] ; then
-        cat $sshErr | grep "not mounted" > /dev/null 2>&1
+        cat $sshErr | grep -e "not mounted" -e "mountpoint not found" > /dev/null 2>&1
         if [ $? -ne 0 ] ; then   # didn't found 'not mounted'
             log "ERROR: Exit umount_dev(): failed to umount $mntpoint. See $sshErr for details"
             return 1
@@ -125,7 +125,13 @@ function mount_dev()
     local SSH="ssh -p $ssh_port $user@$node"
     local sshErr=`mktemp --suffix=-stor-deploy.mount_dev`
 
-    $SSH mount $device $mntpoint -o $mount_opts 2> $sshErr 
+    $SSH mkdir -p $mntpoint 2> $sshErr
+    if [ -s $sshErr ] ; then
+        log "ERROR: Exit mount_dev(): failed to create mount point $mntpoint on $node. See $sshErr for details"
+        return 1
+    fi
+
+    $SSH mount -t $fs_type $device $mntpoint -o $mount_opts 2> $sshErr
     if [ -s $sshErr ] ; then
         log "ERROR: Exit mount_dev(): failed to mount $device on $mntpoint on $node. See $sshErr for details"
         return 1
@@ -197,6 +203,18 @@ function do_mounts()
         fi
     fi
 
+
+    #get the current mounts of $node, so that we can check if our requested device are already mounted on the requested
+    #mount point;
+    local SSH="ssh -p $ssh_port $user@$node"
+    local sshErr=`mktemp --suffix=-stor-deploy.do_mounts`
+    local node_mounts=`mktemp --suffix=-stor-deploy.node_mounts`
+    $SSH mount > $node_mounts 2> $sshErr
+    if [ -s $sshErr -o ! -s $node_mounts ] ; then
+        log "ERROR: Exit do_mounts(): failed to get mounts of $node. See $sshErr and $node_mounts for details"
+        return 1
+    fi
+
     while [ -n "$mounts" ] ; do
         local one_mnt=""
 
@@ -225,6 +243,16 @@ function do_mounts()
             return 1
         fi
 
+        local old_mntpoint=`grep "$device" $node_mounts | cut -d ' ' -f 3`
+        if [ -z "$old_mntpoint" ] ; then
+            log "INFO: in do_mounts(): $device is not mounted on $node, we need to mount it on $mntpoint"
+        elif [ "$old_mntpoint" != "$mntpoint" ] ; then
+            log "INFO: in do_mounts(): $device is mounted on $old_mntpoint on $node, we need to re-mount it on $mntpoint"
+        else
+            log "WARN: in do_mounts(): $device is already mounted on $mntpoint on $node, we need not to re-mount it"
+            continue
+        fi
+
         umount_dev "$node" "$user" "$ssh_port" "$device" "$mntpoint"
         if [ $? -ne 0 ] ; then
             log "ERROR: Exit do_mounts(): umount_dev failed. node=$node device=$device mntpoint=$mntpoint"
@@ -243,6 +271,8 @@ function do_mounts()
             return 1
         fi
     done
+
+    rm -f $sshErr $node_mounts
 
     log "INFO: Exit do_mounts(): Success"
     return 0

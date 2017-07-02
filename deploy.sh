@@ -10,8 +10,9 @@ LOG_FILE=$LOGS/deploy.log
 
 . $SCRIPT_PDIR/tools.sh
 . $SCRIPT_PDIR/parse-conf.sh
+. $SCRIPT_PDIR/zk-deploy.sh
 
-timestamp=`date +%Y-%m-%d-%H-%M-%S`
+run_timestamp=`date +%Y%m%d%H%M%S`
 
 modules=
 operation=
@@ -76,7 +77,7 @@ fi
 
 log ""
 log "INFO: =============================== `basename $0` ==============================="
-log "INFO: timestamp=$timestamp modules=$modules operation=$operation"
+log "INFO: run_timestamp=$run_timestamp modules=$modules operation=$operation"
 
 
 if [ "$operation" = "deploy" ] ; then
@@ -90,4 +91,19 @@ if [ "$operation" = "deploy" ] ; then
     fi
 fi
 
-parse_configuration "stor-default.conf" "stor.conf" "$LOGS/test2" "$modules"
+#TODO: checks;
+
+parse_configuration $SCRIPT_PDIR/stor-default.conf $SCRIPT_PDIR/stor.conf $LOGS/deploy-$run_timestamp "$modules"
+if [ $? -ne 0 ] ; then
+    echo "ERROR: parse_configuration failed"
+    exit 1
+fi
+
+deploy_zk $LOGS/deploy-$run_timestamp
+if [ $? -ne 0 ] ; then
+    echo "ERROR: deploy_zk failed"
+    exit 1
+fi
+
+echo "INFO: Succeeded."
+exit 0
