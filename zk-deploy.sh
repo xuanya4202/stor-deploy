@@ -213,73 +213,142 @@ function dispatch_zk_package()
     return 0
 }
 
-function generate_zk_cfg()
+#generate config files for 'common' or a specific node;
+#Notice that the zoo.cfg.$Node generated is not complete;
+function gen_cfg_for_node()
+{
+    local zk_conf_dir=$1
+    local node=$2    # node may be a specific node (such as 192.168.100.131), or 'common'
+    local zoo_cfg_node_list=$3
+
+    log "INFO: Enter gen_cfg_for_node(): zk_conf_dir=$zk_conf_dir node=$node"
+
+    local node_cfg=$zk_conf_dir/$node
+
+    #Step-1: check if specific config file exists for a node. For zookeeper, it must exist;
+    if [ "X$node" != "Xcommon" ] ; then
+        if [ ! -f $node_cfg ] ; then
+            log "ERROR: Exit gen_cfg_for_node(): $node does not have a specific config file"
+            return 1
+        else
+            log "INFO: in gen_cfg_for_node(): $node has a specific config file"
+        fi
+    fi
+
+    #Step-2: generate 'myid' file if node is not 'common'
+    if [ "X$node" != "Xcommon" ] ; then
+        local myid_file=$zk_conf_dir/myid.$node
+        rm -f $myid_file
+
+        local myid=`grep "myid=" $node_cfg | cut -d '=' -f 2-`
+        if [ -z "$myid" ] ; then
+            log "ERROR: Exit gen_cfg_for_node(): there is no myid in $node_cfg"
+            return 1
+        fi
+
+        if [[ ! "$myid" =~ ^[0-9][0-9]*$ ]] ; then
+            log "ERROR: Exit gen_cfg_for_node(): myid in $node_cfg is invalid. myid=$myid"
+            return 1
+        fi
+
+        echo $myid > $myid_file || return 1
+
+        echo "server.${myid}=${node}:2888:3888" >> $zoo_cfg_node_list || return 1
+    fi
+
+    #Step-3: check if the config file for $node is the same as common
+    if [ "X$node" != "Xcommon" ] ; then
+        local tmpfile=`mktemp --suffix=-stor-deploy.gen_zk_cfg`
+        local comm_cfg=$zk_conf_dir/common
+
+        sed -e '/^myid=/ d' $node_cfg > $tmpfile
+
+        local cfg_diff=`diff $tmpfile $comm_cfg`
+        if [ -z "$cfg_diff" ] ; then
+            log "INFO: Exit gen_cfg_for_node(): specific config file of $node is same as common, skip it!"
+            rm -f $tmpfile
+            return 0
+        else
+            log "INFO: in gen_cfg_for_node(): specific config file of $node is different from common, process it!"
+            rm -f $tmpfile
+        fi
+    fi
+
+    #Step-4: generate zoo.cfg.$node
+    local zoo_cfg=$zk_conf_dir/zoo.cfg.$node
+    rm -f $zoo_cfg
+    cat $node_cfg | grep "^cfg:" | while read line ; do
+        line=`echo $line | sed -e 's/^cfg://'`
+        echo $line >> $zoo_cfg
+    done
+
+    #Step-5: generate zkEnv.sh.$node
+    #we copy the release version and make some changes;
+    #Note that in function dispatch_zk_package, we have already dispatched the zookeeper package to each node, and 
+    #extracted them in install_path. So we copy the zkEnv.sh from current node;
+
+    local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
+    local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
+    local installation=`basename $package`
+    installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
+    installation=$install_path/$installation
+    
+    if [ ! -f $installation/bin/zkEnv.sh ] ; then
+        log "ERROR: Exit gen_cfg_for_node(): $installation/bin/zkEnv.sh doesn't exist"
+        return 1
+    fi
+
+    local zk_env=$zk_conf_dir/zkEnv.sh.$node
+    rm -f $zk_env
+    cp -f $installation/bin/zkEnv.sh $zk_env
+
+    cat $node_cfg | grep "^env:" | while read line ; do
+        line=`echo $line | sed -e 's/^env://'`
+        sed -i -e "2 i $line" $zk_env
+    done
+
+    log "INFO: Exit gen_cfg_for_node(): Success"
+    return 0
+}
+
+function gen_cfg_for_all_nodes()
 {
     local zk_conf_dir=$1
 
-    log "INFO: Enter generate_zk_cfg(): zk_conf_dir=$zk_conf_dir"
+    log "INFO: Enter gen_cfg_for_all_nodes(): zk_conf_dir=$zk_conf_dir"
 
-    local zk_comm_cfg=$zk_conf_dir/common
     local zk_nodes=$zk_conf_dir/nodes
 
-    #Step-0: generate a piece of zoo.cfg:
+    #generate config files for common
+    gen_cfg_for_node "$zk_conf_dir" "common"
+    if [ $? -ne 0 ] ; then
+        log "ERROR: Exit gen_cfg_for_all_nodes(): failed to generate config files for 'common'"
+        return 1
+    fi
+
+    #generate config files for specific nodes 
+    local zoo_cfg_node_list=`mktemp --suffix=-stor-deploy.zoo_cfg_list`
+    rm -f $zoo_cfg_node_list
+    for node in `cat $zk_nodes` ; do
+        gen_cfg_for_node "$zk_conf_dir" "$node" "$zoo_cfg_node_list"
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit gen_cfg_for_all_nodes(): failed to generate config files for $node"
+            return 1
+        fi
+    done
+
+    #Notice that, in gen_cfg_for_node() the zoo.cfg.$node generated is not complete, a list like this is missing:
     #          server.1=node1.localdomain:2888:3888
     #          server.2=node2.localdomain:2888:3888
     #          server.3=node3.localdomain:2888:3888
-    # it will be appended to zoo.cfg.common and zoo.cfg.$node;
-    local all_nodes_port=`mktemp --suffix=-stor-deploy.all_zk_port`
-    rm -f $all_nodes_port
-    local id=1
-    for node in `cat $zk_nodes` ; do
-        echo "server.${id}=${node}:2888:3888" >> $all_nodes_port
-        id=`expr $id + 1`
+    #however, we have gathered the list in $zoo_cfg_node_list
+    for zoo_cfg in `find $zk_conf_dir -name "zoo.cfg.*" -type f` ; do
+        cat $zoo_cfg_node_list >> $zoo_cfg
     done
 
-    #Step-1: generate zoo.cfg.common based on $zk_comm_cfg;
-    local comm_zoo_cfg=$zk_conf_dir/zoo.cfg.common
-    rm -f $comm_zoo_cfg
-    cat $zk_comm_cfg  | grep "^cfg:" | while read line ; do
-        line=`echo $line | sed -e 's/^cfg://'`
-        echo $line >> $comm_zoo_cfg
-    done
-    cat $all_nodes_port >> $comm_zoo_cfg
+    rm -f $zoo_cfg_node_list
 
-    #Step-2: generate zkEnv.sh.common (by copying default version and modifying it) based on $zk_comm_cfg
-    local install_path=`grep "install_path=" $zk_comm_cfg | cut -d '=' -f 2-`
-
-
-    
-    #Step-X: generate zoo.cfg based on cfg of each node, if the cfg is different from $zk_comm_cfg
-    local tmpfile=`mktemp --suffix=-stor-deploy.gen_zk_cfg`
-    for node in `cat $zk_nodes` ; do
-        local node_specific_cfg=$zk_conf_dir/$node
-        if [ ! -f $node_specific_cfg ] ; then
-            log "INFO: in generate_zk_cfg(): $node has no specific config file, so its config is the same as common"
-            continue
-        fi
-
-        log "INFO: in generate_zk_cfg(): $node has a specific config file"
-        sed -e '/^myid=/ d' $node_specific_cfg  > $tmpfile
-        local diff_cfg=`diff $tmpfile $zk_comm_cfg`
-        if [ -z "$diff_cfg" ] ; then
-            log "INFO: in generate_zk_cfg(): $node has a specific config file, but it's the same as common, skip it!"
-            continue
-        fi
-
-        log "INFO: in generate_zk_cfg(): $node has a specific config file that's different from common, process it!"
-
-        local node_zoo_cfg=$zk_conf_dir/zoo.cfg.$node
-        rm -f $node_zoo_cfg
-        cat $node_specific_cfg  | grep "^cfg:" | while read line ; do
-            line=`echo $line | sed -e 's/^cfg://'`
-            echo $line >> $node_zoo_cfg
-        done
-        cat $all_nodes_port >> $node_zoo_cfg
-    done
-
-    rm -f $all_nodes_port $tmpfile 
-
-    log "INFO: Exit generate_zk_cfg(): Success"
+    log "INFO: Exit gen_cfg_for_all_nodes(): Success"
     return 0
 }
 
@@ -387,7 +456,7 @@ function deploy_zk()
     fi
 
     #Step-3: generate configurations for each zk node;
-    generate_zk_cfg $zk_conf_dir
+    gen_cfg_for_all_nodes $zk_conf_dir
     if [ $? -ne 0 ] ; then
         log "ERROR: Exit deploy_zk(): failed to generate configuration files for each node"
         return 1
@@ -397,6 +466,6 @@ function deploy_zk()
     return 0
 }
 
-generate_zk_cfg logs/test2/zk
+gen_cfg_for_all_nodes logs/test2/zk
 
 fi

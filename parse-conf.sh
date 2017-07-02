@@ -183,7 +183,7 @@ function parse_def_conf()
                 [ -f $dest/common ] && cp -f $dest/common $curr_dir
             else
                 log "INFO: in function parse_def_conf(): skip [ZK_COMMON] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         elif [ "$line" = "[HDFS_COMMON]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -195,7 +195,7 @@ function parse_def_conf()
                 [ -f $dest/common ] && cp -f $dest/common $curr_dir
             else
                 log "INFO: in function parse_def_conf(): skip [HDFS_COMMON] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         elif [ "$line" = "[HBASE_COMMON]" ] ; then
             if include_module "hbase" "$modules" ; then
@@ -207,7 +207,7 @@ function parse_def_conf()
                 [ -f $dest/common ] && cp -f $dest/common $curr_dir
             else
                 log "INFO: in function parse_def_conf(): skip [HBASE_COMMON] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         else
             [ -z "$curr_dir" ] && continue
@@ -269,7 +269,7 @@ function parse_stor_conf()
                 fi
             else
                 log "INFO: in function parse_stor_conf(): skip [ZK_COMMON] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         elif [ "$line" = "[ZK_NODES]" ] ; then
             if include_module "zk" "$modules" ; then
@@ -284,7 +284,7 @@ function parse_stor_conf()
                 rm -f $node_list || return 1
             else
                 log "INFO: in function parse_stor_conf(): skip [ZK_NODES] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         elif [ "$line" = "[HDFS_COMMON]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -298,7 +298,7 @@ function parse_stor_conf()
                 fi
             else
                 log "INFO: in function parse_stor_conf(): skip [HDFS_COMMON] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         elif [ "$line" = "[HDFS_NAME_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -313,7 +313,7 @@ function parse_stor_conf()
                 rm -f $node_list || return 1
             else
                 log "INFO: in function parse_stor_conf(): skip [HDFS_NAME_NODES] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         elif [ "$line" = "[HDFS_DATA_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -328,7 +328,7 @@ function parse_stor_conf()
                 rm -f $node_list || return 1
             else
                 log "INFO: in function parse_stor_conf(): skip [HDFS_DATA_NODES] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         elif [ "$line" = "[HDFS_JOURNAL_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -343,7 +343,7 @@ function parse_stor_conf()
                 rm -f $node_list || return 1
             else
                 log "INFO: in function parse_stor_conf(): skip [HDFS_JOURNAL_NODES] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         elif [ "$line" = "[HDFS_ZKFC_NODES]" ] ; then
             if include_module "hdfs" "$modules" ; then
@@ -358,7 +358,7 @@ function parse_stor_conf()
                 rm -f $node_list || return 1
             else
                 log "INFO: in function parse_stor_conf(): skip [HDFS_ZKFC_NODES] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         elif [ "$line" = "[HBASE_COMMON]" ] ; then
             if include_module "hbase" "$modules" ; then
@@ -372,7 +372,7 @@ function parse_stor_conf()
                 fi
             else
                 log "INFO: in function parse_stor_conf(): skip [HBASE_COMMON] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         elif [ "$line" = "[HBASE_MASTER_NODES]" ] ; then
             if include_module "hbase" "$modules" ; then
@@ -387,7 +387,7 @@ function parse_stor_conf()
                 rm -f $node_list || return 1
             else
                 log "INFO: in function parse_stor_conf(): skip [HBASE_MASTER_NODES] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         elif [ "$line" = "[HBASE_REGION_NODES]" ] ; then
             if include_module "hbase" "$modules" ; then
@@ -402,7 +402,7 @@ function parse_stor_conf()
                 rm -f $node_list || return 1
             else
                 log "INFO: in function parse_stor_conf(): skip [HBASE_REGION_NODES] block"
-                $curr_dir=""
+                curr_dir=""
             fi
         else
             [ -z "$curr_dir" ] && continue
