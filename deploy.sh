@@ -11,11 +11,16 @@ LOG_FILE=$LOGS/deploy.log
 . $SCRIPT_PDIR/tools.sh
 . $SCRIPT_PDIR/parse-conf.sh
 . $SCRIPT_PDIR/zk-deploy.sh
+. $SCRIPT_PDIR/hdfs-deploy.sh
 
 run_timestamp=`date +%Y%m%d%H%M%S`
 
 modules=
 operation=
+
+zk_included=
+hdfs_included=
+hbase_included=
 
 function usage()
 {
@@ -54,11 +59,24 @@ if [ -z "$modules" ] ; then
 fi
 
 for m in `echo $modules | sed -e 's/,/ /g'` ; do
-    if [ "$m" != "zk" -a  "$m" != "hdfs"  -a "$m" != "hbase" ] ; then
-        echo "ERROR: argument 'modules' is invalid: $m is unrecognized, it must be 'zk', 'hdfs' or 'hbase'"
-        usage
-        exit 1
+    if [ "X$m" = "Xzk" ] ; then
+        zk_included="true"
+        continue
     fi
+
+    if [ "X$m" = "Xhdfs" ] ; then
+        hdfs_included="true"
+        continue
+    fi
+
+    if [ "X$m" = "Xhbase" ] ; then
+        hbase_included="true"
+        continue
+    fi
+
+    echo "ERROR: argument 'modules' is invalid: $m is unrecognized, it must be 'zk', 'hdfs' or 'hbase'"
+    usage
+    exit 1
 done
 
 if [ -z "$operation" ] ; then
@@ -85,15 +103,29 @@ fi
 
 parse_configuration $SCRIPT_PDIR/conf/stor-default.conf $SCRIPT_PDIR/conf/stor.conf $LOGS/deploy-$run_timestamp "$modules"
 if [ $? -ne 0 ] ; then
-    echo "ERROR: parse_configuration failed"
+    log "ERROR: parse_configuration failed"
     exit 1
 fi
 
-deploy_zk "$LOGS/deploy-$run_timestamp" "$operation"
-if [ $? -ne 0 ] ; then
-    echo "ERROR: deploy_zk failed"
-    exit 1
+log "INFO: zk_included=$zk_included"
+log "INFO: hdfs_included=$hdfs_included"
+log "INFO: hbase_included=$hbase_included"
+
+if [ "X$zk_included" = "Xtrue" ] ; then
+    deploy_zk "$LOGS/deploy-$run_timestamp" "$operation"
+    if [ $? -ne 0 ] ; then
+        log "ERROR: deploy_zk failed"
+        exit 1
+    fi
 fi
 
-echo "INFO: Succeeded."
+if [ "X$hdfs_included" = "Xtrue" ] ; then
+    deploy_hdfs "$LOGS/deploy-$run_timestamp" "$operation"
+    if [ $? -ne 0 ] ; then
+        log "ERROR: deploy_hdfs failed"
+        exit 1
+    fi
+fi
+
+log "INFO: Succeeded."
 exit 0

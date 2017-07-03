@@ -240,9 +240,9 @@ function parse_stor_conf()
     local node_list=""
     local curr_dir=""
 
-    local all_nodes=$dest/all-nodes
-    local hdfs_all_nodes=$dest/hdfs/all-nodes
-    local hbase_all_nodes=$dest/hbase/all-nodes
+    local all_nodes=$dest/nodes
+    local hdfs_all_nodes=$dest/hdfs/nodes
+    local hbase_all_nodes=$dest/hbase/nodes
     rm -f $all_nodes $hdfs_all_nodes $hbase_all_nodes || return 1
 
     cat $stor_conf_file | while read line ; do

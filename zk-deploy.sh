@@ -237,23 +237,23 @@ function dispatch_zk_package()
 
 #generate config files for 'common' or a specific node;
 #Notice that the zoo.cfg.$Node generated is not complete;
-function gen_cfg_for_node()
+function gen_cfg_for_zk_node()
 {
     local zk_conf_dir=$1
     local node=$2    # node may be a specific node (such as 192.168.100.131), or 'common'
     local zoo_cfg_node_list=$3
 
-    log "INFO: Enter gen_cfg_for_node(): zk_conf_dir=$zk_conf_dir node=$node"
+    log "INFO: Enter gen_cfg_for_zk_node(): zk_conf_dir=$zk_conf_dir node=$node"
 
     local node_cfg=$zk_conf_dir/$node
 
     #Step-1: check if specific config file exists for a node. For zookeeper, it must exist;
     if [ "X$node" != "Xcommon" ] ; then
         if [ ! -f $node_cfg ] ; then
-            log "ERROR: Exit gen_cfg_for_node(): $node does not have a specific config file"
+            log "ERROR: Exit gen_cfg_for_zk_node(): $node does not have a specific config file"
             return 1
         else
-            log "INFO: in gen_cfg_for_node(): $node has a specific config file"
+            log "INFO: in gen_cfg_for_zk_node(): $node has a specific config file"
         fi
     fi
 
@@ -264,12 +264,12 @@ function gen_cfg_for_node()
 
         local myid=`grep "myid=" $node_cfg | cut -d '=' -f 2-`
         if [ -z "$myid" ] ; then
-            log "ERROR: Exit gen_cfg_for_node(): there is no myid in $node_cfg"
+            log "ERROR: Exit gen_cfg_for_zk_node(): there is no myid in $node_cfg"
             return 1
         fi
 
         if [[ ! "$myid" =~ ^[0-9][0-9]*$ ]] ; then
-            log "ERROR: Exit gen_cfg_for_node(): myid in $node_cfg is invalid. myid=$myid"
+            log "ERROR: Exit gen_cfg_for_zk_node(): myid in $node_cfg is invalid. myid=$myid"
             return 1
         fi
 
@@ -287,11 +287,11 @@ function gen_cfg_for_node()
 
         local cfg_diff=`diff $tmpfile $comm_cfg`
         if [ -z "$cfg_diff" ] ; then
-            log "INFO: Exit gen_cfg_for_node(): specific config file of $node is same as common, skip it!"
+            log "INFO: Exit gen_cfg_for_zk_node(): specific config file of $node is same as common, skip it!"
             rm -f $tmpfile
             return 0
         else
-            log "INFO: in gen_cfg_for_node(): specific config file of $node is different from common, process it!"
+            log "INFO: in gen_cfg_for_zk_node(): specific config file of $node is different from common, process it!"
             rm -f $tmpfile
         fi
     fi
@@ -304,47 +304,60 @@ function gen_cfg_for_node()
         echo $line >> $zoo_cfg || return 1
     done
 
-    #Step-5: generate zkEnv.sh.$node
+    #Step-5: extract the package 
     local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
 
     if [ -z "$package" ] ; then
-        log "ERROR: Exit gen_cfg_for_node(): package must be configured, but it's empty"
+        log "ERROR: Exit gen_cfg_for_zk_node(): package must be configured, but it's empty"
         return 1
     fi
 
     if [[ "$package" =~ .tar.gz$ ]] || [[ "$package" =~ .tgz$ ]] ; then
-        log "INFO: in gen_cfg_for_node(): zookeeper package name looks good. package=$package"
+        log "INFO: in gen_cfg_for_zk_node(): zookeeper package name looks good. package=$package"
     else
-        log "ERROR: Exit gen_cfg_for_node(): zookeeper package must be tar.gz or tgz package. package=$package"
+        log "ERROR: Exit gen_cfg_for_zk_node(): zookeeper package must be tar.gz or tgz package. package=$package"
         return 1
     fi
 
     if [ ! -f $package ] ; then
-        log "ERROR: Exit gen_cfg_for_node(): zookeeper package doesn't exist. package=$package"
+        log "ERROR: Exit gen_cfg_for_zk_node(): zookeeper package doesn't exist. package=$package"
         return 1
     fi
 
     local zkdir=`basename $package`
     zkdir=`echo $zkdir | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
 
-    tar -C /tmp/ -zxvf $package $zkdir/bin/zkEnv.sh || return 1
+    local extract_dir=/tmp/zk-extract-$run_timestamp
 
-    local src_zk_env=/tmp/$zkdir/bin/zkEnv.sh
-    if [ ! -s $src_zk_env ] ; then
-        log "ERROR: Exit gen_cfg_for_node(): failed to extract zkEnv.sh from package. package=$package src_zk_env=$src_zk_env"
-        return 1
+    local src_zk_env=$extract_dir/$zkdir/bin/zkEnv.sh
+
+    if [ ! -f $src_zk_env ] ; then 
+        log "INFO: in gen_cfg_for_zk_node(): unzip zookeeper package. package=$package ..."
+
+        rm -fr $extract_dir || return 1
+        mkdir -p $extract_dir || return 1
+
+        tar -C $extract_dir -zxf $package $zkdir/bin/zkEnv.sh || return 1
+
+        if [ ! -f $src_zk_env ] ; then 
+            log "ERROR: Exit gen_cfg_for_zk_node(): failed to unzip zookeeper package. package=$package extract_dir=$extract_dir"
+            return 1
+        fi
+    else
+        log "INFO: in gen_cfg_for_zk_node(): zookeeper package has already been unzipped. package=$package"
     fi
 
+    #Step-6: generate zkEnv.sh.$node
     local zk_env=$zk_conf_dir/zkEnv.sh.$node
     rm -f $zk_env
     cp -f $src_zk_env $zk_env || return 1
 
     cat $node_cfg | grep "^env:" | while read line ; do
         line=`echo $line | sed -e 's/^env://'`
-        sed -i -e "2 i $line" $zk_env
+        sed -i -e "2 i $line" $zk_env || return 1
     done
 
-    #Step-6: generate systemctl zookeeper.service
+    #Step-7: generate systemctl zookeeper.service
     local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
     local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
     local installation=$install_path/$zkdir
@@ -358,22 +371,22 @@ function gen_cfg_for_node()
     sed -i -e "s|^User=.*$|User=$user|" $zk_srv || return 1
     sed -i -e "s|^Group=.*$|Group=$user|" $zk_srv || return 1
 
-    log "INFO: Exit gen_cfg_for_node(): Success"
+    log "INFO: Exit gen_cfg_for_zk_node(): Success"
     return 0
 }
 
-function gen_cfg_for_all_nodes()
+function gen_cfg_for_zk_nodes()
 {
     local zk_conf_dir=$1
 
-    log "INFO: Enter gen_cfg_for_all_nodes(): zk_conf_dir=$zk_conf_dir"
+    log "INFO: Enter gen_cfg_for_zk_nodes(): zk_conf_dir=$zk_conf_dir"
 
     local zk_nodes=$zk_conf_dir/nodes
 
     #generate config files for common
-    gen_cfg_for_node "$zk_conf_dir" "common"
+    gen_cfg_for_zk_node "$zk_conf_dir" "common"
     if [ $? -ne 0 ] ; then
-        log "ERROR: Exit gen_cfg_for_all_nodes(): failed to generate config files for 'common'"
+        log "ERROR: Exit gen_cfg_for_zk_nodes(): failed to generate config files for 'common'"
         return 1
     fi
 
@@ -381,14 +394,14 @@ function gen_cfg_for_all_nodes()
     local zoo_cfg_node_list=`mktemp --suffix=-stor-deploy.zoo_cfg_list`
     rm -f $zoo_cfg_node_list
     for node in `cat $zk_nodes` ; do
-        gen_cfg_for_node "$zk_conf_dir" "$node" "$zoo_cfg_node_list"
+        gen_cfg_for_zk_node "$zk_conf_dir" "$node" "$zoo_cfg_node_list"
         if [ $? -ne 0 ] ; then
-            log "ERROR: Exit gen_cfg_for_all_nodes(): failed to generate config files for $node"
+            log "ERROR: Exit gen_cfg_for_zk_nodes(): failed to generate config files for $node"
             return 1
         fi
     done
 
-    #Notice that, in gen_cfg_for_node() the zoo.cfg.$node generated is not complete, a list like this is missing:
+    #Notice that, in gen_cfg_for_zk_node() the zoo.cfg.$node generated is not complete, a list like this is missing:
     #          server.1=node1.localdomain:2888:3888
     #          server.2=node2.localdomain:2888:3888
     #          server.3=node3.localdomain:2888:3888
@@ -399,7 +412,7 @@ function gen_cfg_for_all_nodes()
 
     rm -f $zoo_cfg_node_list
 
-    log "INFO: Exit gen_cfg_for_all_nodes(): Success"
+    log "INFO: Exit gen_cfg_for_zk_nodes(): Success"
     return 0
 }
 
@@ -617,7 +630,7 @@ function deploy_zk()
     fi
 
     #Step-1: generate configurations for each zk node;
-    gen_cfg_for_all_nodes $zk_conf_dir
+    gen_cfg_for_zk_nodes $zk_conf_dir
     if [ $? -ne 0 ] ; then
         log "ERROR: Exit deploy_zk(): failed to generate configuration files for each node"
         return 1
@@ -625,7 +638,7 @@ function deploy_zk()
 
     if [ "X$operation" = "Xparse" ] ; then
         log "INFO: Exit deploy_zk(): stop early because operation=$operation"
-        exit 0
+        return 0
     fi
 
     #Step-2: check zk nodes (such as java environment), clean up zk nodes, and prepare (mount the disks, create the dirs)
@@ -665,7 +678,7 @@ function deploy_zk()
             return 1
         fi
 
-        #we have checked the package in gen_cfg_for_node() function: is name valid, if package exists ...
+        #we have checked the package in gen_cfg_for_zk_node() function: is name valid, if package exists ...
         local installation=`basename $package`
         installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
         installation=$install_path/$installation
