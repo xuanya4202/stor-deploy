@@ -1,0 +1,16 @@
+[Unit]
+Description=Zookeeper service
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=
+ExecStop=
+#Restart=on-failure
+Restart=always
+User=
+Group=
+LimitNOFILE=32768
+LimitNPROC=65536
+[Install]
+WantedBy=multi-user.target

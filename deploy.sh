@@ -22,11 +22,9 @@ function usage()
     echo "Usage: $0 -m {modules} -o {operation}"
     echo "    modules   : one or more modules in zk, hdfs and hbase, separated by comma"
     echo "                such as 'zk' or 'zk,hdfs' or 'zk,hdfs,hbase'"
-    echo "    operation : deploy | update"
+    echo "    operation : parse | check | clean | prepare | install | deploy"
     echo "                deploy - completely remove original data and software, and re-deploy from scratch"
     echo "                         so, You Must Be Very Very Careful !!!"
-    echo "                update - update the configuration files based on stor.conf and stor-default.conf"
-    echo "                         and restart the modules"
 }
 
 while getopts "m:o:h" opt ; do
@@ -69,19 +67,13 @@ if [ -z "$operation" ] ; then
     exit 1
 fi
 
-if [ "$operation" != "deploy" -a "$operation" != "update" ] ; then
-        echo "ERROR: argument 'operation' is invalid: $operation is unrecognized, it must be 'deploy' or 'update'"
-        usage
-        exit 1
-fi
-
 log ""
 log "INFO: =============================== `basename $0` ==============================="
 log "INFO: run_timestamp=$run_timestamp modules=$modules operation=$operation"
 
 
-if [ "$operation" = "deploy" ] ; then
-    log "Operation is 'deploy' so data will be cleared, are you sure? [yes/no]"
+if [ "X$operation" = "Xclean" -o "X$operation" = "Xprepare" -o "X$operation" = "Xinstall" -o "X$operation" = "Xdeploy" ] ; then
+    log "Operation is \"$operation\" so data will be cleared, are you sure? [yes/no]"
     read answer
     if [ X"$answer" != "Xyes" ] ; then
         log "Your answer ($answer) is not 'yes', exit!"
@@ -91,15 +83,18 @@ if [ "$operation" = "deploy" ] ; then
     fi
 fi
 
-#TODO: checks;
-
-parse_configuration $SCRIPT_PDIR/stor-default.conf $SCRIPT_PDIR/stor.conf $LOGS/deploy-$run_timestamp "$modules"
+parse_configuration $SCRIPT_PDIR/conf/stor-default.conf $SCRIPT_PDIR/conf/stor.conf $LOGS/deploy-$run_timestamp "$modules"
 if [ $? -ne 0 ] ; then
     echo "ERROR: parse_configuration failed"
     exit 1
 fi
 
-deploy_zk $LOGS/deploy-$run_timestamp
+if [ "X$operation" = "Xparse" ] ; then
+    log "INFO: stop early because operation=$operation"
+    exit 0
+fi
+
+deploy_zk "$LOGS/deploy-$run_timestamp" "$operation"
 if [ $? -ne 0 ] ; then
     echo "ERROR: deploy_zk failed"
     exit 1

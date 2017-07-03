@@ -9,7 +9,7 @@ ZKSCRIPT_PDIR="$(cd "${ZKSCRIPT_PDIR}"; pwd)"
 
 . $ZKSCRIPT_PDIR/tools.sh
 
-[-z "$run_timestamp" ] && run_timestamp=`date +%Y%m%d%H%M%S`
+[ -z "$run_timestamp" ] && run_timestamp=`date +%Y%m%d%H%M%S`
 
 function check_zknode()
 {
@@ -68,9 +68,10 @@ function clean_up_zknode()
 
         log "INFO: in clean_up_zknode(): found a running zookeepr on $node, zk_pid=$zk_pid. try to stop it..."
 
+        log "INFO: in clean_up_zknode(): try to stop it by systemctl: $SSH systemctl stop zookeeper"
         $SSH systemctl stop zookeeper
         sleep 2
-        $SSH kill -9 $zk_pid
+        $SSH kill -9 $zk_pid 2> /dev/null
         sleep 2
     done
 
@@ -82,7 +83,15 @@ function clean_up_zknode()
     #Step-2: try to remove the legacy zookeeper installation;
     log "INFO: in clean_up_zknode(): remove legacy zookeeper installation if there is on $node"
     local backup=/tmp/zookeeper-backup-$run_timestamp
-    $SSH "systemctl disable zookeeper ; mkdir -p $backup ; mv -f $installation /usr/lib/systemd/system/zookeeper.service /etc/systemd/system/zookeeper.service $backup ; systemctl daemon-reload" 2> /dev/null
+
+    log "INFO: in clean_up_zknode(): disable zookeeper: $SSH systemctl disable zookeeper"
+    $SSH systemctl disable zookeeper 2> /dev/null
+
+    $SSH "mkdir -p $backup ; mv -f $installation /usr/lib/systemd/system/zookeeper.service /etc/systemd/system/zookeeper.service $backup" 2> /dev/null
+
+    log "INFO: in clean_up_zknode(): reload daemon: $SSH systemctl daemon-reload"
+    $SSH systemctl daemon-reload 2> /dev/null
+
     $SSH ls $installation /usr/lib/systemd/system/zookeeper.service /etc/systemd/system/zookeeper.service > $sshErr 2>&1
     local n=`cat $sshErr | grep "No such file or directory" | wc -l`
     if [ $n -ne 3 ] ; then
@@ -292,7 +301,7 @@ function gen_cfg_for_node()
     rm -f $zoo_cfg
     cat $node_cfg | grep "^cfg:" | while read line ; do
         line=`echo $line | sed -e 's/^cfg://'`
-        echo $line >> $zoo_cfg
+        echo $line >> $zoo_cfg || return 1
     done
 
     #Step-5: generate zkEnv.sh.$node
@@ -305,6 +314,7 @@ function gen_cfg_for_node()
     local installation=`basename $package`
     installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
     installation=$install_path/$installation
+    local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
     
     if [ ! -f $installation/bin/zkEnv.sh ] ; then
         log "ERROR: Exit gen_cfg_for_node(): $installation/bin/zkEnv.sh doesn't exist"
@@ -313,12 +323,22 @@ function gen_cfg_for_node()
 
     local zk_env=$zk_conf_dir/zkEnv.sh.$node
     rm -f $zk_env
-    cp -f $installation/bin/zkEnv.sh $zk_env
+    cp -f $installation/bin/zkEnv.sh $zk_env || return 1
 
     cat $node_cfg | grep "^env:" | while read line ; do
         line=`echo $line | sed -e 's/^env://'`
         sed -i -e "2 i $line" $zk_env
     done
+
+    #Step-6: generate systemctl zookeeper.service
+    local zk_srv=$zk_conf_dir/zookeeper.service.$node
+    rm -f $zk_srv 
+    cp -f $ZKSCRIPT_PDIR/systemd/zookeeper.service $zk_srv || return 1
+
+    sed -i -e "s|^ExecStart=.*$|ExecStart=$installation/bin/zkServer.sh start|" $zk_srv || return 1
+    sed -i -e "s|^ExecStop=.*$|ExecStop=$installation/bin/zkServer.sh stop|" $zk_srv || return 1
+    sed -i -e "s|^User=.*$|User=$user|" $zk_srv || return 1
+    sed -i -e "s|^Group=.*$|Group=$user|" $zk_srv || return 1
 
     log "INFO: Exit gen_cfg_for_node(): Success"
     return 0
@@ -374,6 +394,8 @@ function dispatch_zk_configs()
     local zk_comm_cfg=$zk_conf_dir/common
     local zk_nodes=$zk_conf_dir/nodes
 
+    local sshErr=`mktemp --suffix=-stor-deploy.dispatch_cfg`
+
     for node in `cat $zk_nodes` ; do
         local node_cfg=$zk_comm_cfg
         [ -f $zk_conf_dir/$node ] ; node_cfg=$zk_conf_dir/$node
@@ -395,6 +417,7 @@ function dispatch_zk_configs()
         installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
         installation=$install_path/$installation
 
+        #find out the config files
         local zoo_cfg=$zk_conf_dir/zoo.cfg.common
         [ -f $zk_conf_dir/zoo.cfg.$node ] && zoo_cfg=$zk_conf_dir/zoo.cfg.$node
 
@@ -403,24 +426,31 @@ function dispatch_zk_configs()
 
         local myid_file=$zk_conf_dir/myid.$node
 
-        log "INFO: in dispatch_zk_configs(): for $node: zoo_cfg=$zoo_cfg zkEnv_sh=$zkEnv_sh myid_file=$myid_file"
+        local zk_srv=$zk_conf_dir/zookeeper.service.common
+        [ -f $zk_conf_dir/zookeeper.service.$node ] && zk_srv=$zk_conf_dir/zookeeper.service.$node
 
+        log "INFO: in dispatch_zk_configs(): for $node: zoo_cfg=$zoo_cfg zkEnv_sh=$zkEnv_sh myid_file=$myid_file zk_srv=$zk_srv"
 
         if [ ! -f $zoo_cfg -o ! -f $zkEnv_sh -o ! -f $myid_file ] ; then
             log "ERROR: Exit dispatch_zk_configs(): file $zoo_cfg or $zkEnv_sh or $myid_file does not exist"
             return 1
         fi
 
+        local SSH="ssh -p $ssh_port $user@$node"
         local SCP="scp -P $ssh_port"
+
+        #copy the config files to zk servers respectively;
         $SCP $zoo_cfg $user@$node:$installation/conf/zoo.cfg
         $SCP $zkEnv_sh $user@$node:$installation/bin/zkEnv.sh
         $SCP $myid_file $user@$node:$dataDir/myid
+        $SCP $zk_srv $user@$node:/usr/lib/systemd/system/zookeeper.service
 
-        local SSH="ssh -p $ssh_port $user@$node"
-        local sshErr=`mktemp --suffix=-stor-deploy.dispatch_cfg`
-
+        #check if the copy above succeeded or not;
         local remoteMD5=`mktemp --suffix=-stor-deploy.remoteMD5`
-        $SSH md5sum $installation/conf/zoo.cfg $installation/bin/zkEnv.sh $dataDir/myid 2> $sshErr | cut -d ' ' -f 1 > $remoteMD5
+        $SSH md5sum $installation/conf/zoo.cfg                         \
+                    $installation/bin/zkEnv.sh $dataDir/myid           \
+                    /usr/lib/systemd/system/zookeeper.service          \
+                    2> $sshErr | cut -d ' ' -f 1 > $remoteMD5
 
         if [ -s "$sshErr" ] ; then
             log "ERROR: Exit dispatch_zk_configs(): failed to get md5 of config files on $node. See $sshErr for details"
@@ -428,24 +458,129 @@ function dispatch_zk_configs()
         fi
 
         local localMD5=`mktemp --suffix=-stor-deploy.localMD5`
-        md5sum $zoo_cfg $zkEnv_sh $myid_file | cut -d ' ' -f 1 > $localMD5
+        md5sum $zoo_cfg $zkEnv_sh $myid_file $zk_srv | cut -d ' ' -f 1 > $localMD5
 
         local md5Diff=`diff $remoteMD5 $localMD5`
         if [ -n "$md5Diff" ] ; then
             log "ERROR: Exit dispatch_zk_configs(): md5 of config files on $node is incorrect. See $sshErr, $remoteMD5 and $localMD5 for details"
             return 1
         fi
+        rm -f $remoteMD5 $localMD5
 
-        rm -f $sshErr $remoteMD5 $localMD5
+        #reload and enable zookeeper service;
+        log "INFO: in dispatch_zk_configs(): reload daemon and enable zookeeper: $SSH \"systemctl daemon-reload ; systemctl enable zookeeper\""
+        $SSH "systemctl daemon-reload ; systemctl enable zookeeper" 2> $sshErr
+        if [ -s "$sshErr" ] ; then
+            cat $sshErr | grep "Created symlink from" > /dev/null 2>&1
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit dispatch_zk_configs(): failed to reload and enable zookeeper service on $node. See $sshErr for details"
+                return 1
+            fi
+        fi
     done
+
+    rm -f $sshErr
 
     log "INFO: Exit dispatch_zk_configs(): Success"
     return 0
 }
 
+function start_zk_servers()
+{
+    local zk_conf_dir=$1
+
+    log "INFO: Enter start_zk_servers(): zk_conf_dir=$zk_conf_dir"
+
+    local zk_comm_cfg=$zk_conf_dir/common
+    local zk_nodes=$zk_conf_dir/nodes
+
+    local sshErr=`mktemp --suffix=-stor-deploy.dispatch_cfg`
+
+    for node in `cat $zk_nodes` ; do
+        local node_cfg=$zk_comm_cfg
+        [ -f $zk_conf_dir/$node ] ; node_cfg=$zk_conf_dir/$node
+
+        local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
+        local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
+
+        local SSH="ssh -p $ssh_port $user@$node"
+
+        log "INFO: in start_zk_servers(): start zookeeper service: $SSH systemctl start zookeeper"
+        $SSH systemctl start zookeeper 2> $sshErr
+        if [ -s "$sshErr" ] ; then
+            log "ERROR: Exit start_zk_servers(): failed to start zookeeper on $node. See $sshErr for details"
+            return 1
+        fi
+    done
+
+    rm -f $sshErr
+
+    log "INFO: Exit start_zk_servers(): Success"
+    return 0
+}
+
+function check_zk_status()
+{
+    local zk_conf_dir=$1
+
+    log "INFO: Enter check_zk_status(): zk_conf_dir=$zk_conf_dir"
+
+    local zk_comm_cfg=$zk_conf_dir/common
+    local zk_nodes=$zk_conf_dir/nodes
+
+    local leader_found=""
+    for node in `cat $zk_nodes` ; do
+        local node_cfg=$zk_comm_cfg
+        [ -f $zk_conf_dir/$node ] ; node_cfg=$zk_conf_dir/$node
+
+        local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
+        local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
+        local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
+        local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
+
+        local installation=`basename $package`
+        installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
+        installation=$install_path/$installation
+
+        local SSH="ssh -p $ssh_port $user@$node"
+
+        local succ=""
+        for i in {1..5} ; do
+            log "INFO: in check_zk_status(): get mode of zookeeper service: $SSH $installation/bin/zkServer.sh status"
+            local mode=`$SSH $installation/bin/zkServer.sh status 2> /dev/null | grep "Mode:" | cut -d ' ' -f 2`
+            if [ "X$mode" = "Xleader" ] ; then
+                log "INFO: in check_zk_status(): mode of zookeeper on $node: $mode"
+                leader_found="true"
+                succ="true"
+                break
+            elif [ "X$mode" = "Xfollower" ] ; then
+                log "INFO: in check_zk_status(): mode of zookeeper on $node: $mode"
+                succ="true"
+                break
+            fi
+            sleep 2
+        done
+
+        if [ -z "$succ" ] ; then
+            log "ERROR: Exit check_zk_status(): failed to get mode of zookeeper service on $node"
+            return 1
+        fi
+    done
+
+    if [ -z "$leader_found" ] ; then
+        log "ERROR: Exit check_zk_status(): didn't found leader on all zookeeper nodes"
+        return 1
+    fi
+
+    log "INFO: Exit check_zk_status(): Success"
+    return 0
+}
+
+
 function deploy_zk()
 {
     local parsed_conf_dir=$1
+    local operation=$2
 
     log "INFO: Enter deploy_zk(): parsed_conf_dir=$parsed_conf_dir"
 
@@ -525,6 +660,8 @@ function deploy_zk()
         log "INFO: in deploy_zk(): check zk node $node ..."
         check_zknode "$node" "$user" "$ssh_port" "$java_home"
 
+        [ "X$operation" = "Xcheck" ] && continue
+
         #clean up zk node
         log "INFO: in deploy_zk(): clean up zk node $node ..."
         clean_up_zknode "$node" "$user" "$ssh_port" "$installation"
@@ -532,6 +669,8 @@ function deploy_zk()
             log "ERROR: Exit deploy_zk(): clean_up_zknode failed on $node"
             return 1
         fi
+
+        [ "X$operation" = "Xclean" ] && continue
 
         #prepare environment
         log "INFO: in deploy_zk(): prepare zk node $node ..."
@@ -541,6 +680,11 @@ function deploy_zk()
             return 1
         fi
     done
+
+    if [ "X$operation" = "Xcheck" -o "X$operation" = "Xclean" -o "X$operation" = "Xprepare" ] ; then
+        log "INFO: Exit deploy_zk(): stop early because operation=$operation"
+        return 0
+    fi
 
     #Step-2: dispatch zk package to each node. Note that what's dispatched is the release-package, which doesn't
     #        contain our configurations. We will dispatch the configuation files later.
@@ -562,6 +706,11 @@ function deploy_zk()
     if [ $? -ne 0 ] ; then
         log "ERROR: Exit deploy_zk(): failed to dispatch configuration files to each node"
         return 1
+    fi
+
+    if [ "X$operation" = "Xinstall" ] ; then
+        log "INFO: Exit deploy_zk(): stop early because operation=$operation"
+        return 0
     fi
 
     #Step-5: start zookeeper servers on each zk node;
