@@ -305,25 +305,39 @@ function gen_cfg_for_node()
     done
 
     #Step-5: generate zkEnv.sh.$node
-    #we copy the release version and make some changes;
-    #Note that in function dispatch_zk_package, we have already dispatched the zookeeper package to each node, and 
-    #extracted them in install_path. So we copy the zkEnv.sh from current node;
-
-    local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
     local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
-    local installation=`basename $package`
-    installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
-    installation=$install_path/$installation
-    local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
-    
-    if [ ! -f $installation/bin/zkEnv.sh ] ; then
-        log "ERROR: Exit gen_cfg_for_node(): $installation/bin/zkEnv.sh doesn't exist"
+
+    if [ -z "$package" ] ; then
+        log "ERROR: Exit gen_cfg_for_node(): package must be configured, but it's empty"
+        return 1
+    fi
+
+    if [[ "$package" =~ .tar.gz$ ]] || [[ "$package" =~ .tgz$ ]] ; then
+        log "INFO: in gen_cfg_for_node(): zookeeper package name looks good. package=$package"
+    else
+        log "ERROR: Exit gen_cfg_for_node(): zookeeper package must be tar.gz or tgz package. package=$package"
+        return 1
+    fi
+
+    if [ ! -f $package ] ; then
+        log "ERROR: Exit gen_cfg_for_node(): zookeeper package doesn't exist. package=$package"
+        return 1
+    fi
+
+    local zkdir=`basename $package`
+    zkdir=`echo $zkdir | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
+
+    tar -C /tmp/ -zxvf $package $zkdir/bin/zkEnv.sh || return 1
+
+    local src_zk_env=/tmp/$zkdir/bin/zkEnv.sh
+    if [ ! -s $src_zk_env ] ; then
+        log "ERROR: Exit gen_cfg_for_node(): failed to extract zkEnv.sh from package. package=$package src_zk_env=$src_zk_env"
         return 1
     fi
 
     local zk_env=$zk_conf_dir/zkEnv.sh.$node
     rm -f $zk_env
-    cp -f $installation/bin/zkEnv.sh $zk_env || return 1
+    cp -f $src_zk_env $zk_env || return 1
 
     cat $node_cfg | grep "^env:" | while read line ; do
         line=`echo $line | sed -e 's/^env://'`
@@ -331,6 +345,10 @@ function gen_cfg_for_node()
     done
 
     #Step-6: generate systemctl zookeeper.service
+    local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
+    local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
+    local installation=$install_path/$zkdir
+
     local zk_srv=$zk_conf_dir/zookeeper.service.$node
     rm -f $zk_srv 
     cp -f $ZKSCRIPT_PDIR/systemd/zookeeper.service $zk_srv || return 1
@@ -598,7 +616,19 @@ function deploy_zk()
         return 1
     fi
 
-    #Step-1: check zk nodes (such as java environment), clean up zk nodes, and prepare (mount the disks, create the dirs)
+    #Step-1: generate configurations for each zk node;
+    gen_cfg_for_all_nodes $zk_conf_dir
+    if [ $? -ne 0 ] ; then
+        log "ERROR: Exit deploy_zk(): failed to generate configuration files for each node"
+        return 1
+    fi
+
+    if [ "X$operation" = "Xparse" ] ; then
+        log "INFO: Exit deploy_zk(): stop early because operation=$operation"
+        exit 0
+    fi
+
+    #Step-2: check zk nodes (such as java environment), clean up zk nodes, and prepare (mount the disks, create the dirs)
     for node in `cat $zk_nodes` ; do
         local node_cfg=$zk_comm_cfg
         [ -f $zk_conf_dir/$node ] ; node_cfg=$zk_conf_dir/$node
@@ -635,23 +665,7 @@ function deploy_zk()
             return 1
         fi
 
-        if [ -z "$package" ] ; then
-            log "ERROR: Exit deploy_zk(): package must be configured, but it's empty"
-            return 1
-        fi
-
-        if [[ "$package" =~ .tar.gz$ ]] || [[ "$package" =~ .tgz$ ]] ; then
-            log "INFO: in deploy_zk(): zookeeper package name looks good. package=$package"
-        else
-            log "ERROR: Exit deploy_zk(): zookeeper package must be tar.gz or tgz package. package=$package"
-            return 1
-        fi
-
-        if [ ! -f $package ] ; then
-            log "ERROR: Exit deploy_zk(): zookeeper package doesn't exist. package=$package"
-            return 1
-        fi
-
+        #we have checked the package in gen_cfg_for_node() function: is name valid, if package exists ...
         local installation=`basename $package`
         installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
         installation=$install_path/$installation
@@ -686,18 +700,11 @@ function deploy_zk()
         return 0
     fi
 
-    #Step-2: dispatch zk package to each node. Note that what's dispatched is the release-package, which doesn't
+    #Step-3: dispatch zk package to each node. Note that what's dispatched is the release-package, which doesn't
     #        contain our configurations. We will dispatch the configuation files later.
     dispatch_zk_package $zk_conf_dir
     if [ $? -ne 0 ] ; then
         log "ERROR: Exit deploy_zk(): failed to dispatch zookeeper package to some node"
-        return 1
-    fi
-
-    #Step-3: generate configurations for each zk node;
-    gen_cfg_for_all_nodes $zk_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_zk(): failed to generate configuration files for each node"
         return 1
     fi
 

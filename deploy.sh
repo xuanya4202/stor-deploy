@@ -89,11 +89,6 @@ if [ $? -ne 0 ] ; then
     exit 1
 fi
 
-if [ "X$operation" = "Xparse" ] ; then
-    log "INFO: stop early because operation=$operation"
-    exit 0
-fi
-
 deploy_zk "$LOGS/deploy-$run_timestamp" "$operation"
 if [ $? -ne 0 ] ; then
     echo "ERROR: deploy_zk failed"
