@@ -748,7 +748,41 @@ function dispatch_hdfs_configs()
         rm -f $remoteMD5 $localMD5
 
         #reload and enable hadoop daemons;
+        local enable_services=""
+        local num=0
+        grep -w $node $hdfs_name_nodes > /dev/null 2>&1
+        if [ $? -eq 0 ] ; then
+            enable_services="$enable_services hadoop@namenode.service hadoop@zkfc.service"
+            num=`expr $num + 2`
+        fi
 
+        grep -w $node $hdfs_data_nodes > /dev/null 2>&1
+        if [ $? -eq 0 ] ; then
+            enable_services="$enable_services hadoop@datanode.service"
+            num=`expr $num + 1`
+        fi
+
+        grep -w $node $hdfs_journal_nodes > /dev/null 2>&1
+        if [ $? -eq 0 ] ; then
+            enable_services="$enable_services hadoop@journalnode.service"
+            num=`expr $num + 1`
+        fi
+
+        log "INFO: in dispatch_hdfs_configs(): $SSH systemctl daemon-reload ; systemctl enable $enable_services"
+        $SSH "systemctl daemon-reload ; systemctl enable $enable_services" > $sshErr 2>&1
+        sed -i -e '/Created symlink from/ d' $sshErr
+        if [ -s "$sshErr" ] ; then
+            log "ERROR: Exit dispatch_hdfs_configs(): failed to reload and enable hadoop service on $node. enable_services=$enable_services. See $sshErr for details"
+            return 1
+        fi
+
+        log "INFO: in dispatch_hdfs_configs(): $SSH systemctl status $enable_services"
+        $SSH "systemctl status $enable_services" > $sshErr 2>&1
+        local n=`cat $sshErr | grep "Loaded: error" | wc -l`
+        if [ $n -ne $num ] ; then
+            log "ERROR: Exit dispatch_hdfs_configs(): failed enable hadoop service on $node. enable_services=$enable_services. See $sshErr for details"
+            return 1
+        fi
     done
 
     rm -f $sshErr
@@ -768,21 +802,14 @@ function start_hdfs_daemons()
 
     local sshErr=`mktemp --suffix=-stor-deploy.dispatch_cfg`
 
-    for node in `cat $zk_nodes` ; do
-        local node_cfg=$zk_comm_cfg
-        [ -f $zk_conf_dir/$node ] && node_cfg=$zk_conf_dir/$node
+    for node in `cat $hdfs_nodes` ; do
+        local node_cfg=$hdfs_comm_cfg
+        [ -f $hdfs_conf_dir/$node ] && node_cfg=$hdfs_conf_dir/$node
 
         local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
         local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
 
         local SSH="ssh -p $ssh_port $user@$node"
-
-        log "INFO: in start_hdfs_daemons(): start zookeeper service: $SSH systemctl start zookeeper"
-        $SSH systemctl start zookeeper 2> $sshErr
-        if [ -s "$sshErr" ] ; then
-            log "ERROR: Exit start_hdfs_daemons(): failed to start zookeeper on $node. See $sshErr for details"
-            return 1
-        fi
     done
 
     rm -f $sshErr
@@ -791,6 +818,122 @@ function start_hdfs_daemons()
     return 0
 }
 
+function check_hdfs_status()
+{
+    local hdfs_conf_dir=$1
+    log "INFO: Enter check_hdfs_status(): hdfs_conf_dir=$hdfs_conf_dir"
+
+    local hdfs_comm_cfg=$hdfs_conf_dir/common
+    local hdfs_nodes=$hdfs_conf_dir/nodes
+    local hdfs_name_nodes=$hdfs_conf_dir/name-nodes
+    local hdfs_data_nodes=$hdfs_conf_dir/data-nodes
+    local hdfs_journal_nodes=$hdfs_conf_dir/journal-nodes
+
+    local sshErr=`mktemp --suffix=-stor-deploy.chk_hdfs`
+    local java_processes=`mktemp --suffix=-stor-deploy.chk_hdfs_jps`
+
+    for node in `cat $hdfs_nodes` ; do
+        local node_cfg=$hdfs_comm_cfg
+        [ -f $hdfs_conf_dir/$node ] && node_cfg=$hdfs_conf_dir/$node
+
+        local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
+        local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
+        local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
+        local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
+
+        log "INFO: in check_hdfs_status(): node=$node node_cfg=$node_cfg"
+        log "INFO:        user=$user"
+        log "INFO:        ssh_port=$ssh_port"
+        log "INFO:        install_path=$install_path"
+        log "INFO:        package=$package"
+
+        local installation=`basename $package`
+        installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
+        installation=$install_path/$installation
+
+        local SSH="ssh -p $ssh_port $user@$node"
+
+        $SSH jps > $java_processes 2>&1
+
+        #Step-1: check name nodes
+        grep -w $node $hdfs_name_nodes > /dev/null 2>&1
+        if [ $? -eq 0 ] ; then
+            grep -w "NameNode" $java_processes > /dev/null 2>&1
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit check_hdfs_status(): NameNode was not found on $node. See $java_processes for details"
+                return 1
+            fi
+            grep -w "DFSZKFailoverController" $java_processes > /dev/null 2>&1
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit check_hdfs_status(): DFSZKFailoverController was not found on $node. See $java_processes for details"
+                return 1
+            fi
+
+            #$node is namenode, we run haadmin on it, checking status of all namenodes.
+            local nns=`grep "hdfs-site:dfs.ha.namenodes" $node_cfg | cut -d '=' -f 2- | sed -e 's/,/ /g'`
+            if [ -z "$nns" ] ; then
+                log "ERROR: Exit check_hdfs_status(): hdfs-site:dfs.ha.namenodes.{nameservice} was not configured corretly. See $node_cfg for details"
+                return 1
+            fi
+
+            local active_found=""
+            local standby_found=""
+            for nn in $nns ; do
+                log "INFO: $SSH $installation/bin/hdfs haadmin -getServiceState $nn"
+                $SSH "$installation/bin/hdfs haadmin -getServiceState $nn" > $sshErr 2>&1
+                grep -i -w "Active" $sshErr > /dev/null 2>&1
+                if [ $? -eq 0 ] ; then
+                    active_found="true"
+                else
+                    grep -i -w "Standby" $sshErr > /dev/null 2>&1
+                    if [ $? -eq 0 ] ; then
+                        standby_found="true"
+                    else
+                        log "ERROR: Exit check_hdfs_status(): failed to get service state of $nn. See $sshErr for details"
+                        return 1
+                    fi
+                fi
+
+                log "INFO: $SSH $installation/bin/hdfs haadmin -checkHealth $nn && echo yes"
+                $SSH "$installation/bin/hdfs haadmin -checkHealth $nn && echo yes" | grep -w "yes" > /dev/null 2>&1
+                if [ $? -ne 0 ] ; then
+                    log "ERROR: Exit check_hdfs_status(): $nn is not healthy."
+                    return 1
+                fi
+            done
+
+            if [ -z "$standby_found" -o -z "$active_found" ] ; then
+                log "ERROR: Exit check_hdfs_status(): didn't find active namenode or standby namenode. See $sshErr for details"
+                return 1
+            fi
+        fi
+
+        #Step-2: check journal nodes
+        grep -w $node $hdfs_journal_nodes > /dev/null 2>&1
+        if [ $? -eq 0 ] ; then
+            grep -w "JournalNode" $java_processes > /dev/null 2>&1
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit check_hdfs_status(): JournalNode was not found on $node. See $java_processes for details"
+                return 1
+            fi
+        fi
+
+        #Step-3: check data nodes
+        grep -w $node $hdfs_data_nodes > /dev/null 2>&1
+        if [ $? -eq 0 ] ; then
+            grep -w "DataNode" $java_processes > /dev/null 2>&1
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit check_hdfs_status(): DataNode was not found on $node. See $java_processes for details"
+                return 1
+            fi
+        fi
+    done
+
+    rm -f $sshErr $java_processes
+    
+    log "INFO: Exit check_hdfs_status(): Success"
+    return 0
+}
 
 function deploy_hdfs()
 {
@@ -936,6 +1079,9 @@ function deploy_hdfs()
         log "ERROR: Exit deploy_hdfs(): failed to start hdfs daemons on some node"
         return 1
     fi
+
+    log "INFO: in deploy_hdfs(): sleep 10 seconds before checking hdfs status ..."
+    sleep 10 
 
     #Step-7: check hdfs status;
     check_hdfs_status $hdfs_conf_dir
