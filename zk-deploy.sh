@@ -11,7 +11,7 @@ ZKSCRIPT_PDIR="$(cd "${ZKSCRIPT_PDIR}"; pwd)"
 
 [ -z "$run_timestamp" ] && run_timestamp=`date +%Y%m%d%H%M%S`
 
-function check_zknode()
+function check_zk_node()
 {
     #user must be 'root' for now, so we don't use sudo;
     local node=$1
@@ -19,7 +19,7 @@ function check_zknode()
     local ssh_port=$3
     local java_home=$4
 
-    log "INFO: Enter check_zknode(): node=$node user=$user ssh_port=$ssh_port java_home=$java_home"
+    log "INFO: Enter check_zk_node(): node=$node user=$user ssh_port=$ssh_port java_home=$java_home"
 
     local SSH="ssh -p $ssh_port $user@$node"
     local sshErr=`mktemp --suffix=-stor-deploy.check`
@@ -27,17 +27,17 @@ function check_zknode()
     $SSH $java_home/bin/java -version > $sshErr 2>&1
     cat $sshErr | grep "java version" > /dev/null 2>&1
     if [ $? -ne 0 ] ;  then  #didn't found "java version", so java is not available
-        log "ERROR: Exit check_zknode(): java is not availabe at $java_home on $node. See $sshErr for details"
+        log "ERROR: Exit check_zk_node(): java is not availabe at $java_home on $node. See $sshErr for details"
         return 1
     fi
 
     rm -f $sshErr
 
-    log "INFO: Exit check_zknode(): Success"
+    log "INFO: Exit check_zk_node(): Success"
     return 0
 }
 
-function clean_up_zknode()
+function cleanup_zk_node()
 {
     #user must be 'root' for now, so we don't use sudo;
     local node=$1
@@ -45,7 +45,7 @@ function clean_up_zknode()
     local ssh_port=$3
     local installation=$4
 
-    log "INFO: Enter clean_up_zknode(): node=$node user=$user ssh_port=$ssh_port installation=$installation"
+    log "INFO: Enter cleanup_zk_node(): node=$node user=$user ssh_port=$ssh_port installation=$installation"
 
     local SSH="ssh -p $ssh_port $user@$node"
     local sshErr=`mktemp --suffix=-stor-deploy.zk_clean`
@@ -54,58 +54,68 @@ function clean_up_zknode()
     local succ=""
     local zk_pid=""
     for r in {1..4} ; do
-        zk_pid=`$SSH jps 2> $sshErr | grep QuorumPeerMain | cut -d ' ' -f 1 | grep '^[0-9][0-9]*$'`
+        zk_pid=`$SSH jps 2> $sshErr | grep QuorumPeerMain | cut -d ' ' -f 1`
         if [ -s "$sshErr" ] ; then
-            log "ERROR: Exit clean_up_zknode(): failed to find running zookeepr on $node. See $sshErr for details"
+            log "ERROR: Exit cleanup_zk_node(): failed to find running zookeepr on $node. See $sshErr for details"
             return 1
         fi
 
         if [ -z "$zk_pid" ] ; then
-            log "INFO: in clean_up_zknode(): didn't find running zookeepr on $node"
+            log "INFO: in cleanup_zk_node(): didn't find running zookeepr on $node"
             succ="true"
             break
         fi
 
-        log "INFO: in clean_up_zknode(): found a running zookeepr on $node, zk_pid=$zk_pid. try to stop it..."
-
-        log "INFO: in clean_up_zknode(): try to stop it by systemctl: $SSH systemctl stop zookeeper"
-        $SSH systemctl stop zookeeper
+        log "INFO: in cleanup_zk_node(): try to stop zookeeper by systemctl: $SSH systemctl stop zookeeper"
+        $SSH systemctl stop zookeeper 2> /dev/null
         sleep 2
+
+        log "INFO: in cleanup_zk_node(): try to stop zookeeper by kill"
         $SSH kill -9 $zk_pid 2> /dev/null
         sleep 2
     done
 
     if [ "X$succ" != "Xtrue" ] ; then
-        log "ERROR: Exit clean_up_zknode(): failed to stop zookeeper on $onde. zk_pid=$zk_pid"
+        log "ERROR: Exit cleanup_zk_node(): failed to stop zookeeper on $onde. zk_pid=$zk_pid"
         return 1
     fi
 
     #Step-2: try to remove the legacy zookeeper installation;
-    log "INFO: in clean_up_zknode(): remove legacy zookeeper installation if there is on $node"
+    log "INFO: in cleanup_zk_node(): remove legacy zookeeper installation if there is on $node"
     local backup=/tmp/zookeeper-backup-$run_timestamp
 
-    log "INFO: in clean_up_zknode(): disable zookeeper: $SSH systemctl disable zookeeper"
+    log "INFO: in cleanup_zk_node(): disable zookeeper: $SSH systemctl disable zookeeper"
     $SSH systemctl disable zookeeper 2> /dev/null
 
     $SSH "mkdir -p $backup ; mv -f $installation /usr/lib/systemd/system/zookeeper.service /etc/systemd/system/zookeeper.service $backup" 2> /dev/null
 
-    log "INFO: in clean_up_zknode(): reload daemon: $SSH systemctl daemon-reload"
-    $SSH systemctl daemon-reload 2> /dev/null
+    log "INFO: in cleanup_zk_node(): reload daemon: $SSH systemctl daemon-reload"
+    $SSH systemctl daemon-reload 2> $sshErr 
+    if [ -s "$sshErr" ] ; then
+        log "ERROR: Exit cleanup_zk_node(): failed to reload daemon on $node. See $sshErr for details"
+        return 1
+    fi
 
     $SSH ls $installation /usr/lib/systemd/system/zookeeper.service /etc/systemd/system/zookeeper.service > $sshErr 2>&1
     local n=`cat $sshErr | grep "No such file or directory" | wc -l`
     if [ $n -ne 3 ] ; then
-        log "ERROR: Exit clean_up_zknode(): ssh failed or we failed to remove legacy zookeeper installation on $node. See $sshErr for details"
+        log "ERROR: Exit cleanup_zk_node(): ssh failed or we failed to remove legacy zookeeper installation on $node. See $sshErr for details"
+        return 1
+    fi
+
+    $SSH systemctl status zookeeper 2>&1 | grep -e "could not be found" -e "Loaded: not-found" > /dev/null 2>&1
+    if [ $? -ne 0 ] ; then
+        log "ERROR: Exit cleanup_zk_node(): failed to check zookeeper.service on $node"
         return 1
     fi
 
     rm -f $sshErr
 
-    log "INFO: Exit clean_up_zknode(): Success"
+    log "INFO: Exit cleanup_zk_node(): Success"
     return 0
 }
 
-function prepare_zknode()
+function prepare_zk_node()
 {
     #user must be 'root' for now, so we don't use sudo;
     local node=$1
@@ -123,7 +133,7 @@ function prepare_zknode()
     local mount_opts=$2
     local mkfs_cmd=$3
 
-    log "INFO: Enter prepare_zknode(): node=$node user=$user ssh_port=$ssh_port"
+    log "INFO: Enter prepare_zk_node(): node=$node user=$user ssh_port=$ssh_port"
     log "INFO:       dataDir=$dataDir"
     log "INFO:       dataLogDir=$dataLogDir"
     log "INFO:       logdir=$logdir"
@@ -134,18 +144,18 @@ function prepare_zknode()
     log "INFO:       mkfs_cmd=$mkfs_cmd"
 
     local SSH="ssh -p $ssh_port $user@$node"
-    local sshErr=`mktemp --suffix=-stor-deploy.prepare_zknode`
+    local sshErr=`mktemp --suffix=-stor-deploy.prepare_zk_node`
 
     #Step-1: mount the disks
     if [ -n "$mounts" ] ; then
         if [ -z "$mount_opts" -o -z "$mkfs_cmd" ] ; then
-            log "ERROR: Exit prepare_zknode(): mount_opts and mkfs_cmd must be present when mounts is present"
+            log "ERROR: Exit prepare_zk_node(): mount_opts and mkfs_cmd must be present when mounts is present"
             return 1
         fi
 
         do_mounts "$node" "$user" "$ssh_port" "$mounts" "$mount_opts" "$mkfs_cmd"
         if [ $? -ne 0 ] ; then
-            log "ERROR: Exit prepare_zknode(): do_mounts failed for $node"
+            log "ERROR: Exit prepare_zk_node(): do_mounts failed for $node"
             return 1
         fi
     fi
@@ -154,19 +164,19 @@ function prepare_zknode()
     local piddir=`dirname $pidfile`
     $SSH "mkdir -p $dataDir $dataLogDir $logdir $piddir $install_path" 2> $sshErr
     if [ -s $sshErr ] ; then
-        log "ERROR: Exit prepare_zknode(): failed to create dirs for zookeeper on $node. See $sshErr for details"
+        log "ERROR: Exit prepare_zk_node(): failed to create dirs for zookeeper on $node. See $sshErr for details"
         return 1
     fi
 
-    $SSH rm -fr $dataDir/* $dataLogDir/* $logdir/* $piddir/* 2> $sshErr #don't rm $install_path/* (e.g. /usr/local/)
+    $SSH "rm -fr $dataDir/* $dataLogDir/* $logdir/* $piddir/*" 2> $sshErr #don't rm $install_path/* (e.g. /usr/local/)
     if [ -s $sshErr ] ; then
-        log "ERROR: Exit prepare_zknode(): failed to rm legacy data of zookeeper on $node. See $sshErr for details"
+        log "ERROR: Exit prepare_zk_node(): failed to rm legacy data of zookeeper on $node. See $sshErr for details"
         return 1
     fi
 
     rm -f $sshErr
 
-    log "INFO: Exit prepare_zknode(): Success"
+    log "INFO: Exit prepare_zk_node(): Success"
     return 0
 }
 
@@ -179,19 +189,30 @@ function dispatch_zk_package()
     local zk_comm_cfg=$zk_conf_dir/common
     local zk_nodes=$zk_conf_dir/nodes
 
+    local package=""
     local src_md5=""
     local base_name=""
+
     for node in `cat $zk_nodes` ; do
         local node_cfg=$zk_comm_cfg
-        [ -f $zk_conf_dir/$node ] ; node_cfg=$zk_conf_dir/$node
+        [ -f $zk_conf_dir/$node ] && node_cfg=$zk_conf_dir/$node
 
         local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
         local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
         local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
-        local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
 
-        [ -z "$src_md5" ] && src_md5=`md5sum $package | cut -d ' ' -f 1`
-        [ -z "$base_name" ] && base_name=`basename $package`
+        if [ -z "$package" ] ; then  
+            package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
+            src_md5=`md5sum $package | cut -d ' ' -f 1`
+            base_name=`basename $package`
+        else
+            local thePack=`grep "package=" $node_cfg | cut -d '=' -f 2-`
+            local the_base=`basename $thePack`
+            if [ "$the_base" != "$base_name" ] ; then
+                log "ERROR: Exit dispatch_zk_package(): package for $node is different from others. thePack=$thePack package=$package"
+                return 1
+            fi
+        fi
 
         log "INFO: in dispatch_zk_package(): start background task: scp -P $ssh_port $package $user@$node:$install_path"
         scp -P $ssh_port $package $user@$node:$install_path &
@@ -202,7 +223,7 @@ function dispatch_zk_package()
     local sshErr=`mktemp --suffix=-stor-deploy.zk_dispatch`
     for node in `cat $zk_nodes` ; do
         local node_cfg=$zk_comm_cfg
-        [ -f $zk_conf_dir/$node ] ; node_cfg=$zk_conf_dir/$node
+        [ -f $zk_conf_dir/$node ] && node_cfg=$zk_conf_dir/$node
 
         local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
         local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
@@ -222,12 +243,15 @@ function dispatch_zk_package()
             return 1
         fi
 
-        $SSH tar zxf $install_path/$base_name -C $install_path 2> $sshErr
+        log "INFO: in dispatch_zk_package(): start background task: $SSH tar zxf $install_path/$base_name -C $install_path"
+        $SSH tar zxf $install_path/$base_name -C $install_path 2> $sshErr &
         if [ -s $sshErr ] ; then
             log "ERROR: Exit dispatch_zk_package(): failed to extract $install_path/$base_name on $node. See $sshErr for details"
             return 1
         fi
     done
+
+    wait
 
     rm -f $sshErr
 
@@ -425,11 +449,11 @@ function dispatch_zk_configs()
     local zk_comm_cfg=$zk_conf_dir/common
     local zk_nodes=$zk_conf_dir/nodes
 
-    local sshErr=`mktemp --suffix=-stor-deploy.dispatch_cfg`
+    local sshErr=`mktemp --suffix=-stor-deploy.dispatch_zk_cfg`
 
     for node in `cat $zk_nodes` ; do
         local node_cfg=$zk_comm_cfg
-        [ -f $zk_conf_dir/$node ] ; node_cfg=$zk_conf_dir/$node
+        [ -f $zk_conf_dir/$node ] && node_cfg=$zk_conf_dir/$node
 
         local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
         local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
@@ -462,8 +486,8 @@ function dispatch_zk_configs()
 
         log "INFO: in dispatch_zk_configs(): for $node: zoo_cfg=$zoo_cfg zkEnv_sh=$zkEnv_sh myid_file=$myid_file zk_srv=$zk_srv"
 
-        if [ ! -f $zoo_cfg -o ! -f $zkEnv_sh -o ! -f $myid_file ] ; then
-            log "ERROR: Exit dispatch_zk_configs(): file $zoo_cfg or $zkEnv_sh or $myid_file does not exist"
+        if [ ! -s $zoo_cfg -o ! -s $zkEnv_sh -o ! -s $myid_file ] ; then
+            log "ERROR: Exit dispatch_zk_configs(): file $zoo_cfg or $zkEnv_sh or $myid_file does not exist or is empty"
             return 1
         fi
 
@@ -477,7 +501,7 @@ function dispatch_zk_configs()
         $SCP $zk_srv $user@$node:/usr/lib/systemd/system/zookeeper.service
 
         #check if the copy above succeeded or not;
-        local remoteMD5=`mktemp --suffix=-stor-deploy.remoteMD5`
+        local remoteMD5=`mktemp --suffix=-stor-deploy.zk.remoteMD5`
         $SSH md5sum $installation/conf/zoo.cfg                         \
                     $installation/bin/zkEnv.sh $dataDir/myid           \
                     /usr/lib/systemd/system/zookeeper.service          \
@@ -488,7 +512,7 @@ function dispatch_zk_configs()
             return 1
         fi
 
-        local localMD5=`mktemp --suffix=-stor-deploy.localMD5`
+        local localMD5=`mktemp --suffix=-stor-deploy.zk.localMD5`
         md5sum $zoo_cfg $zkEnv_sh $myid_file $zk_srv | cut -d ' ' -f 1 > $localMD5
 
         local md5Diff=`diff $remoteMD5 $localMD5`
@@ -529,7 +553,7 @@ function start_zk_servers()
 
     for node in `cat $zk_nodes` ; do
         local node_cfg=$zk_comm_cfg
-        [ -f $zk_conf_dir/$node ] ; node_cfg=$zk_conf_dir/$node
+        [ -f $zk_conf_dir/$node ] && node_cfg=$zk_conf_dir/$node
 
         local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
         local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
@@ -562,7 +586,7 @@ function check_zk_status()
     local leader_found=""
     for node in `cat $zk_nodes` ; do
         local node_cfg=$zk_comm_cfg
-        [ -f $zk_conf_dir/$node ] ; node_cfg=$zk_conf_dir/$node
+        [ -f $zk_conf_dir/$node ] && node_cfg=$zk_conf_dir/$node
 
         local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
         local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
@@ -613,7 +637,7 @@ function deploy_zk()
     local parsed_conf_dir=$1
     local operation=$2
 
-    log "INFO: Enter deploy_zk(): parsed_conf_dir=$parsed_conf_dir"
+    log "INFO: Enter deploy_zk(): parsed_conf_dir=$parsed_conf_dir operation=$operation"
 
     local zk_conf_dir=$parsed_conf_dir/zk
     local zk_comm_cfg=$zk_conf_dir/common
@@ -644,7 +668,7 @@ function deploy_zk()
     #Step-2: check zk nodes (such as java environment), clean up zk nodes, and prepare (mount the disks, create the dirs)
     for node in `cat $zk_nodes` ; do
         local node_cfg=$zk_comm_cfg
-        [ -f $zk_conf_dir/$node ] ; node_cfg=$zk_conf_dir/$node
+        [ -f $zk_conf_dir/$node ] && node_cfg=$zk_conf_dir/$node
 
         local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
         local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
@@ -674,7 +698,7 @@ function deploy_zk()
         log "INFO:        logdir=$logdir"
 
         if [ "X$user" != "Xroot" ] ; then
-            log "ERROR: Exit deploy_zk(): currently, only 'root' user is allowed. user=$user"
+            log "ERROR: Exit deploy_zk(): currently, only 'root' user is supported user=$user"
             return 1
         fi
 
@@ -685,15 +709,15 @@ function deploy_zk()
 
         #check the node, such as java environment
         log "INFO: in deploy_zk(): check zk node $node ..."
-        check_zknode "$node" "$user" "$ssh_port" "$java_home"
+        check_zk_node "$node" "$user" "$ssh_port" "$java_home"
 
         [ "X$operation" = "Xcheck" ] && continue
 
         #clean up zk node
         log "INFO: in deploy_zk(): clean up zk node $node ..."
-        clean_up_zknode "$node" "$user" "$ssh_port" "$installation"
+        cleanup_zk_node "$node" "$user" "$ssh_port" "$installation"
         if [ $? -ne 0 ] ; then
-            log "ERROR: Exit deploy_zk(): clean_up_zknode failed on $node"
+            log "ERROR: Exit deploy_zk(): cleanup_zk_node failed on $node"
             return 1
         fi
 
@@ -701,9 +725,9 @@ function deploy_zk()
 
         #prepare environment
         log "INFO: in deploy_zk(): prepare zk node $node ..."
-        prepare_zknode "$node" "$user" "$ssh_port" "$dataDir" "$dataLogDir" "$logdir" "$pidfile" "$install_path" "$mounts" "$mount_opts" "$mkfs_cmd"
+        prepare_zk_node "$node" "$user" "$ssh_port" "$dataDir" "$dataLogDir" "$logdir" "$pidfile" "$install_path" "$mounts" "$mount_opts" "$mkfs_cmd"
         if [ $? -ne 0 ] ; then
-            log "ERROR: Exit deploy_zk(): prepare_zknode failed on $node"
+            log "ERROR: Exit deploy_zk(): prepare_zk_node failed on $node"
             return 1
         fi
     done

@@ -120,7 +120,7 @@ if [ "X$zk_included" = "Xtrue" ] ; then
 fi
 
 if [ "X$hdfs_included" = "Xtrue" ] ; then
-    deploy_hdfs "$LOGS/deploy-$run_timestamp" "$operation"
+    deploy_hdfs "$LOGS/deploy-$run_timestamp" "$operation" "$zk_included"
     if [ $? -ne 0 ] ; then
         log "ERROR: deploy_hdfs failed"
         exit 1
