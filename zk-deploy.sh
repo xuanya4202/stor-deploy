@@ -532,7 +532,7 @@ function dispatch_zk_configs()
         fi
 
         $SSH "systemctl status zookeeper" > $sshErr 2>&1
-        cat $sshErr | grep "Loaded: error" > /dev/null 2>&1
+        cat $sshErr | grep "Loaded: loaded" > /dev/null 2>&1
         if [ $? -ne 0 ] ; then
             log "ERROR: Exit dispatch_zk_configs(): failed enable zookeeper service on $node. See $sshErr for details"
             return 1

@@ -238,7 +238,7 @@ function check_zk_service()
 
     while [ -n "$zk_nodes" ] ; do
         local zk_node=""
-        cat $zk_nodes | grep "," > /dev/null 2>&1
+        echo $zk_nodes | grep "," > /dev/null 2>&1
         if [ $? -eq 0 ] ; then
             zk_node=`echo $zk_nodes | cut -d ',' -f 1`
             zk_nodes=`echo $zk_nodes | cut -d ',' -f 2-`
@@ -265,7 +265,8 @@ function check_zk_service()
 
         #TODO: currently I din't find a way to check the zookeeper service based only on $zk_host and $zk_port.
         #      So I just check if QuorumPeerMain is running, this is not so good ...
-        #Need to find a another way.
+        #Need to find a another way: such as telnet, which check if zk service is available at $zk_host and $zk_port,
+        #      not relying on ssh.
 
         #And I cannot get the ssh user and port of $zk_host, just use user and ssh_port configured in $hdfs_comm_cfg
         #this may be wrong. (however currently we only support 'root' user)
@@ -374,8 +375,8 @@ function cleanup_hdfs_node()
         systemctl_files="$systemctl_files /usr/lib/systemd/system/$systemctl_cfg /etc/systemd/system/$systemctl_cfg"
     done
     #Yuanguo: fast test
-    #$SSH "mkdir -p $backup ; mv -f $installation $systemctl_files $backup" 2> /dev/null
-    $SSH "mkdir -p $backup ; mv -f $systemctl_files $backup" 2> /dev/null
+    $SSH "mkdir -p $backup ; mv -f $installation $systemctl_files $backup" 2> /dev/null
+    #$SSH "mkdir -p $backup ; mv -f $systemctl_files $backup" 2> /dev/null
 
     log "INFO: in cleanup_hdfs_node(): reload daemon: $SSH systemctl daemon-reload"
     $SSH systemctl daemon-reload 2> $sshErr 
@@ -384,11 +385,11 @@ function cleanup_hdfs_node()
         return 1
     fi
 
-    $SSH ls $installation $systemctl_files > $sshErr 2>&1
-    local n=`cat $sshErr | grep "No such file or directory" | wc -l`
     #Yuanguo: fast test
-    #if [ $n -ne 13 ] ; then
-    if [ $n -ne 12 ] ; then
+    $SSH ls $installation $systemctl_files > $sshErr 2>&1
+    #$SSH ls $systemctl_files > $sshErr 2>&1
+    sed -i -e '/No such file or directory/ d' $sshErr
+    if [ -s $sshErr ] ; then
         log "ERROR: Exit cleanup_hdfs_node(): ssh failed or we failed to remove legacy hadoop installation on $node. See $sshErr for details"
         return 1
     fi
@@ -630,7 +631,6 @@ function dispatch_hdfs_package()
     return 0
 }
 
-
 function dispatch_hdfs_configs()
 {
     local hdfs_conf_dir=$1
@@ -695,7 +695,7 @@ function dispatch_hdfs_configs()
         log "INFO: in dispatch_hdfs_configs():         hadoop_service=$hadoop_service"
 
         if [ ! -s $hadoop_env_sh -o ! -s $core_site_xml -o ! -s $hdfs_site_xml -o ! -s $slaves_sh \
-                   -o ! -s $had_daemon_sh -o ! -s $hadoop_target -o ! -s $hadoop_service] ; then
+                   -o ! -s $had_daemon_sh -o ! -s $hadoop_target -o ! -s $hadoop_service ] ; then
             log "ERROR: Exit dispatch_hdfs_configs(): some config file does not exist or is empty"
             return 1
         fi
@@ -778,7 +778,7 @@ function dispatch_hdfs_configs()
 
         log "INFO: in dispatch_hdfs_configs(): $SSH systemctl status $enable_services"
         $SSH "systemctl status $enable_services" > $sshErr 2>&1
-        local n=`cat $sshErr | grep "Loaded: error" | wc -l`
+        local n=`cat $sshErr | grep "Loaded: loaded" | wc -l`
         if [ $n -ne $num ] ; then
             log "ERROR: Exit dispatch_hdfs_configs(): failed enable hadoop service on $node. enable_services=$enable_services. See $sshErr for details"
             return 1
@@ -798,11 +798,14 @@ function start_hdfs_daemons()
     log "INFO: Enter start_hdfs_daemons(): hdfs_conf_dir=$hdfs_conf_dir"
 
     local hdfs_comm_cfg=$hdfs_conf_dir/common
-    local hdfs_nodes=$hdfs_conf_dir/nodes
+    local hdfs_name_nodes=$hdfs_conf_dir/name-nodes
+    local hdfs_data_nodes=$hdfs_conf_dir/data-nodes
+    local hdfs_journal_nodes=$hdfs_conf_dir/journal-nodes
 
     local sshErr=`mktemp --suffix=-stor-deploy.dispatch_cfg`
 
-    for node in `cat $hdfs_nodes` ; do
+    #Step-1: start all journal nodes
+    for node in `cat $hdfs_journal_nodes` ; do
         local node_cfg=$hdfs_comm_cfg
         [ -f $hdfs_conf_dir/$node ] && node_cfg=$hdfs_conf_dir/$node
 
@@ -810,6 +813,131 @@ function start_hdfs_daemons()
         local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
 
         local SSH="ssh -p $ssh_port $user@$node"
+
+        log "INFO: $SSH systemctl start hadoop@journalnode"
+        $SSH "systemctl start hadoop@journalnode" 2> $sshErr
+        if [ -s "$sshErr" ] ; then
+            log "ERROR: Exit start_hdfs_daemons(): error occurred when starting journal-node on $node. See $sshErr for details"
+            return 1
+        fi
+    done
+
+    #select one namenode as master and the other as standby
+    local master_nn_ssh=""
+    local master_nn_install=""
+
+    local standby_nn_ssh=""
+    local standby_nn_install=""
+
+    for node in `cat $hdfs_name_nodes` ; do
+        local node_cfg=$hdfs_comm_cfg
+        [ -f $hdfs_conf_dir/$node ] && node_cfg=$hdfs_conf_dir/$node
+
+        local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
+        local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
+        local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
+        local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
+
+        local installation=`basename $package`
+        installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
+        installation=$install_path/$installation
+
+        local SSH="ssh -p $ssh_port $user@$node"
+
+        if [ -z "$master_nn_ssh" ] ; then
+            master_nn_ssh="$SSH"
+            master_nn_install="$installation"
+        elif [ -z "$standby_nn_ssh" ] ; then
+            standby_nn_ssh="$SSH"
+            standby_nn_install="$installation"
+        else
+            log "ERROR: Exit start_hdfs_daemons(): more than two namenodes configured. Currently only two supported"
+            return 1
+        fi
+    done
+
+    if [ -z "$master_nn_ssh" -o -z "$standby_nn_ssh" ] ; then
+        log "ERROR: Exit start_hdfs_daemons(): less than two namenodes configured. master_nn_ssh=$master_nn_ssh standby_nn_ssh=$standby_nn_ssh"
+        return 1
+    fi
+
+    #Steps 2-8 are for namenodes;
+
+    #Step-2: format namedb on master namenode, and start master name-node;
+    log "INFO: $master_nn_ssh $master_nn_install/bin/hdfs namenode -format -force"
+    $master_nn_ssh "$master_nn_install/bin/hdfs namenode -format -force" 2> $sshErr
+    grep "INFO util.ExitUtil: Exiting with status 0" $sshErr > /dev/null 2>&1
+    if [ $? -ne 0 ] ; then
+        log "ERROR: Exit start_hdfs_daemons(): failed to format namedb on master name-node. See $sshErr for details"
+        return 1
+    fi
+
+    #Step-3: start master name-node
+    log "INFO: $master_nn_ssh systemctl start hadoop@namenode"
+    $master_nn_ssh "systemctl start hadoop@namenode" 2> $sshErr
+    if [ -s "$sshErr" ] ; then
+        log "ERROR: Exit start_hdfs_daemons(): error occurred when starting master name-node. See $sshErr for details"
+        return 1
+    fi
+
+    #Step-4: bootstrap standby name-node
+    log "INFO: $standby_nn_ssh $standby_nn_install/bin/hdfs namenode -bootstrapStandby -force"
+    $standby_nn_ssh "$standby_nn_install/bin/hdfs namenode -bootstrapStandby -force" 2> $sshErr
+    grep "util.ExitUtil: Exiting with status 0" $sshErr > /dev/null 2>&1
+    if [ $? -ne 0 ] ; then
+        log "ERROR: Exit start_hdfs_daemons(): error occurred when bootstrap standby name-node. See $sshErr for details"
+        return 1
+    fi
+
+    #Step-5: formatZK on master name-node
+    log "INFO: $master_nn_ssh $master_nn_install/bin/hdfs zkfc -formatZK -force"
+    $master_nn_ssh "$master_nn_install/bin/hdfs zkfc -formatZK -force" 2> $sshErr
+    grep "Successfully created.*in ZK" $sshErr > /dev/null 2>&1
+    if [ $? -ne 0 ] ; then
+        log "ERROR: Exit start_hdfs_daemons(): error occurred when formatZK on master name-node. See $sshErr for details"
+        return 1
+    fi
+
+    #Step-6: start zkfc on master name-node
+    log "INFO: $master_nn_ssh systemctl start hadoop@zkfc"
+    $master_nn_ssh "systemctl start hadoop@zkfc" 2> $sshErr
+    if [ -s "$sshErr" ] ; then
+        log "ERROR: Exit start_hdfs_daemons(): error occurred when starting zkfc on master name-node. See $sshErr for details"
+        return 1
+    fi
+    
+    #Step-7: start standby name-node
+    log "INFO: $standby_nn_ssh systemctl start hadoop@namenode"
+    $standby_nn_ssh "systemctl start hadoop@namenode" 2> $sshErr
+    if [ -s "$sshErr" ] ; then
+        log "ERROR: Exit start_hdfs_daemons(): error occurred when starting standby name-node. See $sshErr for details"
+        return 1
+    fi
+
+    #Step-8: start zkfc on standby name-node
+    log "INFO: $standby_nn_ssh systemctl start hadoop@zkfc"
+    $standby_nn_ssh "systemctl start hadoop@zkfc" 2> $sshErr
+    if [ -s "$sshErr" ] ; then
+        log "ERROR: Exit start_hdfs_daemons(): error occurred when starting zkfc on standby name-node. See $sshErr for details"
+        return 1
+    fi
+
+    #Step-9: start all data-nodes
+    for node in `cat $hdfs_data_nodes` ; do
+        local node_cfg=$hdfs_comm_cfg
+        [ -f $hdfs_conf_dir/$node ] && node_cfg=$hdfs_conf_dir/$node
+
+        local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
+        local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
+
+        local SSH="ssh -p $ssh_port $user@$node"
+
+        log "INFO: $SSH systemctl start hadoop@datanode"
+        $SSH "systemctl start hadoop@datanode" 2> $sshErr
+        if [ -s "$sshErr" ] ; then
+            log "ERROR: Exit start_hdfs_daemons(): error occurred when starting datanode on $node. See $sshErr for details"
+            return 1
+        fi
     done
 
     rm -f $sshErr
@@ -1055,11 +1183,11 @@ function deploy_hdfs()
     #Step-4: dispatch hdfs package to each node. Note that what's dispatched is the release-package, which doesn't
     #        contain our configurations. We will dispatch the configuation files later.
     #Yuanguo: fast test
-    #dispatch_hdfs_package $hdfs_conf_dir
-    #if [ $? -ne 0 ] ; then
-    #    log "ERROR: Exit deploy_hdfs(): failed to dispatch hadoop package to some node"
-    #    return 1
-    #fi
+    dispatch_hdfs_package $hdfs_conf_dir
+    if [ $? -ne 0 ] ; then
+        log "ERROR: Exit deploy_hdfs(): failed to dispatch hadoop package to some node"
+        return 1
+    fi
 
     #Step-5: dispatch configurations to each hdfs node;
     dispatch_hdfs_configs $hdfs_conf_dir
