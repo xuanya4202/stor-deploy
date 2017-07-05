@@ -1,0 +1,18 @@
+[Unit]
+Description=The HBase %i daemon
+After=network.target
+PartOf=hbase.target
+
+[Service]
+Type=forking
+Restart=always
+ExecStart=
+ExecStop=
+User=
+Group=
+LimitNOFILE=32768
+LimitNPROC=65536
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target hbase.target

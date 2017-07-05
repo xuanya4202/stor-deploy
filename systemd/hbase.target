@@ -1,0 +1,6 @@
+[Unit]
+Description=hadoop target allowing to start/stop all hbase*@.service instances at once
+After=network-online.target local-fs.target time-sync.target
+
+[Install]
+WantedBy=multi-user.target

@@ -61,9 +61,12 @@ function cleanup_zk_node()
         fi
 
         if [ -z "$zk_pid" ] ; then
-            log "INFO: in cleanup_zk_node(): didn't find running zookeepr on $node"
-            succ="true"
-            break
+            $SSH "systemctl status zookeepr" | grep "Active: active (running)" > /dev/null 2>&1
+            if [ $? -ne 0 ] ; then # didn't find
+                log "INFO: in cleanup_zk_node(): didn't find running zookeepr on $node"
+                succ="true"
+                break
+            fi
         fi
 
         log "INFO: in cleanup_zk_node(): try to stop zookeeper by systemctl: $SSH systemctl stop zookeeper"
@@ -162,13 +165,15 @@ function prepare_zk_node()
 
     #Step-2: create dirs for zookeeper; 
     local piddir=`dirname $pidfile`
+    log "INFO: $SSH mkdir -p $dataDir $dataLogDir $logdir $piddir $install_path"
     $SSH "mkdir -p $dataDir $dataLogDir $logdir $piddir $install_path" 2> $sshErr
     if [ -s $sshErr ] ; then
         log "ERROR: Exit prepare_zk_node(): failed to create dirs for zookeeper on $node. See $sshErr for details"
         return 1
     fi
 
-    $SSH "rm -fr $dataDir/* $dataLogDir/* $logdir/* $piddir/*" 2> $sshErr #don't rm $install_path/* (e.g. /usr/local/)
+    log "INFO: $SSH rm -fr $dataDir/* $dataLogDir/* $logdir/* $piddir/*"
+    $SSH "rm -fr $dataDir/* $dataLogDir/*" 2> $sshErr #don't rm $install_path/* (e.g. /usr/local/)
     if [ -s $sshErr ] ; then
         log "ERROR: Exit prepare_zk_node(): failed to rm legacy data of zookeeper on $node. See $sshErr for details"
         return 1
@@ -325,6 +330,21 @@ function gen_cfg_for_zk_node()
     rm -f $zoo_cfg
     cat $node_cfg | grep "^cfg:" | while read line ; do
         line=`echo $line | sed -e 's/^cfg://'`
+
+        echo $line | grep "=" > /dev/null 2>&1
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit gen_cfg_for_zk_node(): config cfg:$line is invalid"
+            return 1
+        fi
+
+        local key=`echo $line | cut -d '=' -f 1`
+        local val=`echo $line | cut -d '=' -f 2-`
+
+        if [ -z "$key" -o -z "$val" ] ; then
+            log "WARN: in gen_cfg_for_zk_node(): key or val is empty: line=cfg:$line key=$key val=$val"
+            continue
+        fi
+
         echo $line >> $zoo_cfg || return 1
     done
 
@@ -343,8 +363,8 @@ function gen_cfg_for_zk_node()
         return 1
     fi
 
-    if [ ! -f $package ] ; then
-        log "ERROR: Exit gen_cfg_for_zk_node(): zookeeper package doesn't exist. package=$package"
+    if [ ! -s $package ] ; then
+        log "ERROR: Exit gen_cfg_for_zk_node(): zookeeper package doesn't exist or is empty. package=$package"
         return 1
     fi
 
@@ -355,7 +375,7 @@ function gen_cfg_for_zk_node()
 
     local src_zk_env=$extract_dir/$zkdir/bin/zkEnv.sh
 
-    if [ ! -f $src_zk_env ] ; then 
+    if [ ! -s $src_zk_env ] ; then 
         log "INFO: in gen_cfg_for_zk_node(): unzip zookeeper package. package=$package ..."
 
         rm -fr $extract_dir || return 1
@@ -363,7 +383,7 @@ function gen_cfg_for_zk_node()
 
         tar -C $extract_dir -zxf $package $zkdir/bin/zkEnv.sh || return 1
 
-        if [ ! -f $src_zk_env ] ; then 
+        if [ ! -s $src_zk_env ] ; then 
             log "ERROR: Exit gen_cfg_for_zk_node(): failed to unzip zookeeper package. package=$package extract_dir=$extract_dir"
             return 1
         fi
@@ -378,6 +398,21 @@ function gen_cfg_for_zk_node()
 
     cat $node_cfg | grep "^env:" | while read line ; do
         line=`echo $line | sed -e 's/^env://'`
+
+        echo $line | grep "=" > /dev/null 2>&1
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit gen_cfg_for_zk_node(): config env:$line is invalid"
+            return 1
+        fi
+
+        local key=`echo $line | cut -d '=' -f 1`
+        local val=`echo $line | cut -d '=' -f 2-`
+
+        if [ -z "$key" -o -z "$val" ] ; then
+            log "WARN: in gen_cfg_for_zk_node(): key or val is empty: line=env:$line key=$key val=$val"
+            continue
+        fi
+
         sed -i -e "2 i $line" $zk_env || return 1
     done
 
@@ -640,9 +675,9 @@ function check_zk_status()
 function deploy_zk()
 {
     local parsed_conf_dir=$1
-    local operation=$2
+    local stop_after=$2
 
-    log "INFO: Enter deploy_zk(): parsed_conf_dir=$parsed_conf_dir operation=$operation"
+    log "INFO: Enter deploy_zk(): parsed_conf_dir=$parsed_conf_dir stop_after=$stop_after"
 
     local zk_conf_dir=$parsed_conf_dir/zk
     local zk_comm_cfg=$zk_conf_dir/common
@@ -665,8 +700,8 @@ function deploy_zk()
         return 1
     fi
 
-    if [ "X$operation" = "Xparse" ] ; then
-        log "INFO: Exit deploy_zk(): stop early because operation=$operation"
+    if [ "X$stop_after" = "Xparse" ] ; then
+        log "INFO: Exit deploy_zk(): stop early because stop_after=$stop_after"
         return 0
     fi
 
@@ -716,7 +751,7 @@ function deploy_zk()
         log "INFO: in deploy_zk(): check zk node $node ..."
         check_zk_node "$node" "$user" "$ssh_port" "$java_home"
 
-        [ "X$operation" = "Xcheck" ] && continue
+        [ "X$stop_after" = "Xcheck" ] && continue
 
         #clean up zk node
         log "INFO: in deploy_zk(): clean up zk node $node ..."
@@ -726,7 +761,7 @@ function deploy_zk()
             return 1
         fi
 
-        [ "X$operation" = "Xclean" ] && continue
+        [ "X$stop_after" = "Xclean" ] && continue
 
         #prepare environment
         log "INFO: in deploy_zk(): prepare zk node $node ..."
@@ -737,8 +772,8 @@ function deploy_zk()
         fi
     done
 
-    if [ "X$operation" = "Xcheck" -o "X$operation" = "Xclean" -o "X$operation" = "Xprepare" ] ; then
-        log "INFO: Exit deploy_zk(): stop early because operation=$operation"
+    if [ "X$stop_after" = "Xcheck" -o "X$stop_after" = "Xclean" -o "X$stop_after" = "Xprepare" ] ; then
+        log "INFO: Exit deploy_zk(): stop early because stop_after=$stop_after"
         return 0
     fi
 
@@ -757,8 +792,8 @@ function deploy_zk()
         return 1
     fi
 
-    if [ "X$operation" = "Xinstall" ] ; then
-        log "INFO: Exit deploy_zk(): stop early because operation=$operation"
+    if [ "X$stop_after" = "Xinstall" ] ; then
+        log "INFO: Exit deploy_zk(): stop early because stop_after=$stop_after"
         return 0
     fi
 

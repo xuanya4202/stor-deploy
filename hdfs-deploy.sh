@@ -41,11 +41,18 @@ function gen_cfg_for_hdfs_node()
 
     cat $node_cfg | grep "^core-site:" | while read line ; do
         line=`echo $line | sed -e 's/^core-site://'`
+
+        echo $line | grep "=" > /dev/null 2>&1
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit gen_cfg_for_hdfs_node(): config core-site:$line is invalid"
+            return 1
+        fi
+
         local key=`echo $line | cut -d '=' -f 1`
         local val=`echo $line | cut -d '=' -f 2-`
 
         if [ -z "$key" -o -z "$val" ] ; then
-            log "INFO: in gen_cfg_for_hdfs_node(): key or val is empty: line=$line key=$key val=$val"
+            log "WARN: in gen_cfg_for_hdfs_node(): key or val is empty: line=core-site:$line key=$key val=$val"
             continue
         fi
 
@@ -67,11 +74,18 @@ function gen_cfg_for_hdfs_node()
 
     cat $node_cfg | grep "^hdfs-site:" | while read line ; do
         line=`echo $line | sed -e 's/^hdfs-site://'`
+
+        echo $line | grep "=" > /dev/null 2>&1
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit gen_cfg_for_hdfs_node(): config hdfs-site:$line is invalid"
+            return 1
+        fi
+
         local key=`echo $line | cut -d '=' -f 1`
         local val=`echo $line | cut -d '=' -f 2-`
 
         if [ -z "$key" -o -z "$val" ] ; then
-            log "INFO: in gen_cfg_for_hdfs_node(): key or val is empty: line=$line key=$key val=$val"
+            log "WARN: in gen_cfg_for_hdfs_node(): key or val is empty: line=hdfs-site:$line key=$key val=$val"
             continue
         fi
 
@@ -98,8 +112,8 @@ function gen_cfg_for_hdfs_node()
         return 1
     fi
 
-    if [ ! -f $package ] ; then
-        log "ERROR: Exit gen_cfg_for_hdfs_node(): hadoop package doesn't exist. package=$package"
+    if [ ! -s $package ] ; then
+        log "ERROR: Exit gen_cfg_for_hdfs_node(): hadoop package doesn't exist or is empty. package=$package"
         return 1
     fi
 
@@ -112,7 +126,7 @@ function gen_cfg_for_hdfs_node()
     local src_slave_sh=$extract_dir/$hadoopdir/sbin/slaves.sh
     local src_daemon_sh=$extract_dir/$hadoopdir/sbin/hadoop-daemon.sh
 
-    if [ ! -f $src_hadoop_env -o ! -f $src_slave_sh -o ! -f $src_daemon_sh ] ; then 
+    if [ ! -s $src_hadoop_env ] ; then 
         log "INFO: in gen_cfg_for_hdfs_node(): unzip hadoop package. package=$package ..."
 
         rm -fr $extract_dir || return 1
@@ -123,7 +137,7 @@ function gen_cfg_for_hdfs_node()
                                  $hadoopdir/sbin/slaves.sh             \
                                  $hadoopdir/sbin/hadoop-daemon.sh || return 1
 
-        if [ ! -f $src_hadoop_env -o ! -f $src_slave_sh -o ! -f $src_daemon_sh ] ; then 
+        if [ ! -s $src_hadoop_env -o ! -s $src_slave_sh -o ! -s $src_daemon_sh ] ; then 
             log "ERROR: Exit gen_cfg_for_hdfs_node(): failed to unzip hadoop package. package=$package extract_dir=$extract_dir"
             return 1
         fi
@@ -147,6 +161,11 @@ function gen_cfg_for_hdfs_node()
 
         local key=`echo $line | cut -d '=' -f 1`
         local val=`echo $line | cut -d '=' -f 2-`
+
+        if [ -z "$key" -o -z "$val" ] ; then
+            log "WARN: in gen_cfg_for_hdfs_node(): key or val is empty: line=env:$line key=$key val=$val"
+            continue
+        fi
 
         sed -i -e "2 i $key=\"$val\"" $hadoop_env || return 1
     done
@@ -174,7 +193,9 @@ function gen_cfg_for_hdfs_node()
     rm -f $hadoop_service $hadoop_target
 
     cp -f $HDFSSCRIPT_PDIR/systemd/hadoop@.service $hadoop_service || return 1
-    cp -f $HDFSSCRIPT_PDIR/systemd/hadoop.target $hadoop_target || return 1
+    if [ ! -s $hadoop_target ] ; then
+        cp -f $HDFSSCRIPT_PDIR/systemd/hadoop.target $hadoop_target || return 1
+    fi
 
     sed -i -e "s|^ExecStart=.*$|ExecStart=$installation/sbin/hadoop-daemon.sh start %i|" $hadoop_service || return 1
     sed -i -e "s|^ExecStop=.*$|ExecStop=$installation/sbin/hadoop-daemon.sh stop %i|" $hadoop_service || return 1
@@ -213,17 +234,17 @@ function gen_cfg_for_hdfs_nodes()
     return 0
 }
 
-function check_zk_service()
+function check_zk_service_for_hdfs()
 {
     local hdfs_conf_dir=$1
 
-    log "INFO: Enter check_zk_service(): hdfs_conf_dir=$hdfs_conf_dir"
+    log "INFO: Enter check_zk_service_for_hdfs(): hdfs_conf_dir=$hdfs_conf_dir"
 
     local hdfs_comm_cfg=$hdfs_conf_dir/common
 
     local zk_nodes=`grep "hdfs-site:ha.zookeeper.quorum" $hdfs_comm_cfg | cut -d '=' -f 2-`
     if [ -z "$zk_nodes" ] ; then
-        log "INFO: Exit check_zk_service(): ha.zookeeper.quorum is not configured."
+        log "INFO: Exit check_zk_service_for_hdfs(): ha.zookeeper.quorum is not configured."
         return 1
     fi
 
@@ -232,7 +253,7 @@ function check_zk_service()
     local sshErr=`mktemp --suffix=-stor-deploy.check_zk`
 
     if [ "X$user" != "Xroot" ] ; then
-        log "ERROR: Exit check_zk_service(): currently, only 'root' user is supported user=$user"
+        log "ERROR: Exit check_zk_service_for_hdfs(): currently, only 'root' user is supported user=$user"
         return 1
     fi
 
@@ -250,7 +271,7 @@ function check_zk_service()
             zk_nodes=""
         fi
 
-        log "INFO: in check_zk_service(): found a zookeeper node: $zk_node"
+        log "INFO: in check_zk_service_for_hdfs(): found a zookeeper node: $zk_node"
 
         echo "$zk_node" | grep ":" > /dev/null 2>&1
         local zk_host=""
@@ -274,19 +295,19 @@ function check_zk_service()
         local SSH="ssh -p $ssh_port $user@$zk_host"
         local zk_pid=`$SSH jps 2> $sshErr | grep QuorumPeerMain | cut -d ' ' -f 1`
         if [ -s "$sshErr" ] ; then
-            log "ERROR: Exit check_zk_service(): failed to find running zookeepr on $zk_host. See $sshErr for details"
+            log "ERROR: Exit check_zk_service_for_hdfs(): failed to find running zookeepr on $zk_host. See $sshErr for details"
             return 1
         fi
 
         if [ -z "$zk_pid" ] ; then
-            log "ERROR: Exit check_zk_service(): there is no running zookeeper found on $zk_host"
+            log "ERROR: Exit check_zk_service_for_hdfs(): there is no running zookeeper found on $zk_host"
             return 1
         fi
 
-        log "INFO: in check_zk_service(): zookeeper is running on $zk_host"
+        log "INFO: in check_zk_service_for_hdfs(): zookeeper is running on $zk_host"
     done
 
-    log "INFO: Exit check_zk_service(): Success"
+    log "INFO: Exit check_zk_service_for_hdfs(): Success"
     return 0
 }
 
@@ -340,9 +361,12 @@ function cleanup_hdfs_node()
         fi
 
         if [ -z "$hdfs_pids" ] ; then
-            log "INFO: in cleanup_hdfs_node(): didn't find hdfs processes on $node"
-            succ="true"
-            break
+            $SSH "systemctl status $systemctl_cfgs" | grep "Active: active (running)" > /dev/null 2>&1
+            if [ $? -ne 0 ] ; then # didn't find
+                log "INFO: in cleanup_hdfs_node(): didn't find hdfs processes on $node"
+                succ="true"
+                break
+            fi
         fi
 
         log "INFO: in cleanup_hdfs_node(): try to stop hdfs processes by systemctl: $SSH systemctl stop $systemctl_cfgs"
@@ -351,6 +375,7 @@ function cleanup_hdfs_node()
 
         log "INFO: in cleanup_hdfs_node(): try to stop hdfs processes by kill"
         for hdfs_pid in $hdfs_pids ; do
+            log "INFO: $SSH kill -9 $hdfs_pid"
             $SSH kill -9 $hdfs_pid 2> /dev/null
         done
         sleep 5
@@ -375,8 +400,8 @@ function cleanup_hdfs_node()
         systemctl_files="$systemctl_files /usr/lib/systemd/system/$systemctl_cfg /etc/systemd/system/$systemctl_cfg"
     done
     #Yuanguo: fast test
-    $SSH "mkdir -p $backup ; mv -f $installation $systemctl_files $backup" 2> /dev/null
-    #$SSH "mkdir -p $backup ; mv -f $systemctl_files $backup" 2> /dev/null
+    #$SSH "mkdir -p $backup ; mv -f $installation $systemctl_files $backup" 2> /dev/null
+    $SSH "mkdir -p $backup ; mv -f $systemctl_files $backup" 2> /dev/null
 
     log "INFO: in cleanup_hdfs_node(): reload daemon: $SSH systemctl daemon-reload"
     $SSH systemctl daemon-reload 2> $sshErr 
@@ -386,8 +411,8 @@ function cleanup_hdfs_node()
     fi
 
     #Yuanguo: fast test
-    $SSH ls $installation $systemctl_files > $sshErr 2>&1
-    #$SSH ls $systemctl_files > $sshErr 2>&1
+    #$SSH ls $installation $systemctl_files > $sshErr 2>&1
+    $SSH ls $systemctl_files > $sshErr 2>&1
     sed -i -e '/No such file or directory/ d' $sshErr
     if [ -s $sshErr ] ; then
         log "ERROR: Exit cleanup_hdfs_node(): ssh failed or we failed to remove legacy hadoop installation on $node. See $sshErr for details"
@@ -469,7 +494,7 @@ function prepare_hdfs_node()
         return 1
     fi
 
-    $SSH "rm -fr $pid_dir/* $log_dir/* $sock_dir/* $tmp_dir/*" 2> $sshErr #don't rm $install_path/* (e.g. /usr/local/)
+    $SSH "rm -fr $tmp_dir/*" 2> $sshErr #don't rm $install_path/* (e.g. /usr/local/)
     if [ -s $sshErr ] ; then
         log "ERROR: Exit prepare_hdfs_node(): failed to rm legacy data of hadoop on $node. See $sshErr for details"
         return 1
@@ -1066,10 +1091,10 @@ function check_hdfs_status()
 function deploy_hdfs()
 {
     local parsed_conf_dir=$1
-    local operation=$2
+    local stop_after=$2
     local zk_included=$3
 
-    log "INFO: Enter deploy_hdfs(): parsed_conf_dir=$parsed_conf_dir operation=$operation zk_included=$zk_included"
+    log "INFO: Enter deploy_hdfs(): parsed_conf_dir=$parsed_conf_dir stop_after=$stop_after zk_included=$zk_included"
 
     local hdfs_conf_dir=$parsed_conf_dir/hdfs
     local hdfs_comm_cfg=$hdfs_conf_dir/common
@@ -1092,14 +1117,14 @@ function deploy_hdfs()
         return 1
     fi
 
-    if [ "X$operation" = "Xparse" ] ; then
-        log "INFO: Exit deploy_hdfs(): stop early because operation=$operation"
+    if [ "X$stop_after" = "Xparse" ] ; then
+        log "INFO: Exit deploy_hdfs(): stop early because stop_after=$stop_after"
         return 0
     fi
 
     #Step-2: if zookeeper is not included in this deployment, then zookeeper service must be available.
     if [ "X$zk_included" != "Xtrue" ] ; then
-        check_zk_service $hdfs_conf_dir
+        check_zk_service_for_hdfs $hdfs_conf_dir
         if [ $? -ne 0 ] ; then
             log "ERROR: Exit deploy_hdfs(): zookeeper service is not availabe"
             return 1
@@ -1116,18 +1141,6 @@ function deploy_hdfs()
         local java_home=`grep "env:JAVA_HOME=" $node_cfg | cut -d '=' -f 2-`
         local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
         local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
-        local mounts=`grep "mounts=" $node_cfg | cut -d '=' -f 2-`
-        local mkfs_cmd=`grep "mkfs_cmd=" $node_cfg | cut -d '=' -f 2-`
-        local mount_opts=`grep "mount_opts=" $node_cfg | cut -d '=' -f 2-`
-
-        local pid_dir=`grep "env:HADOOP_PID_DIR=" $node_cfg | cut -d '=' -f 2-`
-        local log_dir=`grep "env:HADOOP_LOG_DIR=" $node_cfg | cut -d '=' -f 2-`
-        local sock_dir=`grep "hdfs-site:dfs.domain.socket.path=" $node_cfg | cut -d '=' -f 2-`
-        local tmp_dir=`grep "core-site:hadoop.tmp.dir=" $node_cfg | cut -d '=' -f 2-`
-
-        local jn_edits_dir=`grep "hdfs-site:dfs.journalnode.edits.dir=" $node_cfg | cut -d '=' -f 2-`
-        local nn_name_dir=`grep "hdfs-site:dfs.namenode.name.dir=" $node_cfg | cut -d '=' -f 2-`
-        local dn_data_dir=`grep "hdfs-site:dfs.datanode.data.dir=" $node_cfg | cut -d '=' -f 2-`
 
         log "INFO: in deploy_hdfs(): node=$node node_cfg=$node_cfg"
         log "INFO:        user=$user"
@@ -1135,9 +1148,6 @@ function deploy_hdfs()
         log "INFO:        java_home=$java_home"
         log "INFO:        install_path=$install_path"
         log "INFO:        package=$package"
-        log "INFO:        mounts=$mounts"
-        log "INFO:        mkfs_cmd=$mkfs_cmd"
-        log "INFO:        mount_opts=$mount_opts"
 
 
         if [ "X$user" != "Xroot" ] ; then
@@ -1153,8 +1163,12 @@ function deploy_hdfs()
         #check the node, such as java environment
         log "INFO: in deploy_hdfs(): check hdfs node $node ..."
         check_hdfs_node "$node" "$user" "$ssh_port" "$java_home"
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit deploy_hdfs(): check_hdfs_node failed on $node"
+            return 1
+        fi
 
-        [ "X$operation" = "Xcheck" ] && continue
+        [ "X$stop_after" = "Xcheck" ] && continue
 
         #clean up hdfs node
         log "INFO: in deploy_hdfs(): clean up hdfs node $node ..."
@@ -1164,7 +1178,7 @@ function deploy_hdfs()
             return 1
         fi
 
-        [ "X$operation" = "Xclean" ] && continue
+        [ "X$stop_after" = "Xclean" ] && continue
 
         #prepare environment
         log "INFO: in deploy_hdfs(): prepare hdfs node $node ..."
@@ -1175,19 +1189,19 @@ function deploy_hdfs()
         fi
     done
 
-    if [ "X$operation" = "Xcheck" -o "X$operation" = "Xclean" -o "X$operation" = "Xprepare" ] ; then
-        log "INFO: Exit deploy_hdfs(): stop early because operation=$operation"
+    if [ "X$stop_after" = "Xcheck" -o "X$stop_after" = "Xclean" -o "X$stop_after" = "Xprepare" ] ; then
+        log "INFO: Exit deploy_hdfs(): stop early because stop_after=$stop_after"
         return 0
     fi
 
     #Step-4: dispatch hdfs package to each node. Note that what's dispatched is the release-package, which doesn't
     #        contain our configurations. We will dispatch the configuation files later.
     #Yuanguo: fast test
-    dispatch_hdfs_package $hdfs_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_hdfs(): failed to dispatch hadoop package to some node"
-        return 1
-    fi
+    #dispatch_hdfs_package $hdfs_conf_dir
+    #if [ $? -ne 0 ] ; then
+    #    log "ERROR: Exit deploy_hdfs(): failed to dispatch hadoop package to some node"
+    #    return 1
+    #fi
 
     #Step-5: dispatch configurations to each hdfs node;
     dispatch_hdfs_configs $hdfs_conf_dir
@@ -1196,8 +1210,8 @@ function deploy_hdfs()
         return 1
     fi
 
-    if [ "X$operation" = "Xinstall" ] ; then
-        log "INFO: Exit deploy_hdfs(): stop early because operation=$operation"
+    if [ "X$stop_after" = "Xinstall" ] ; then
+        log "INFO: Exit deploy_hdfs(): stop early because stop_after=$stop_after"
         return 0
     fi
 
@@ -1214,7 +1228,7 @@ function deploy_hdfs()
     #Step-7: check hdfs status;
     check_hdfs_status $hdfs_conf_dir
     if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_hdfs(): failed to check hadfs status"
+        log "ERROR: Exit deploy_hdfs(): failed to check hdfs status"
         return 1
     fi
 

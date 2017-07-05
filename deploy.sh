@@ -12,6 +12,7 @@ LOG_FILE=$LOGS/deploy.log
 . $SCRIPT_PDIR/parse-conf.sh
 . $SCRIPT_PDIR/zk-deploy.sh
 . $SCRIPT_PDIR/hdfs-deploy.sh
+. $SCRIPT_PDIR/hbase-deploy.sh
 
 run_timestamp=`date +%Y%m%d%H%M%S`
 
@@ -123,6 +124,14 @@ if [ "X$hdfs_included" = "Xtrue" ] ; then
     deploy_hdfs "$LOGS/deploy-$run_timestamp" "$operation" "$zk_included"
     if [ $? -ne 0 ] ; then
         log "ERROR: deploy_hdfs failed"
+        exit 1
+    fi
+fi
+
+if [ "X$hbase_included" = "Xtrue" ] ; then
+    deploy_hbase "$LOGS/deploy-$run_timestamp" "$operation" "$zk_included"
+    if [ $? -ne 0 ] ; then
+        log "ERROR: deploy_hbase failed"
         exit 1
     fi
 fi
