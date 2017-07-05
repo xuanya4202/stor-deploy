@@ -112,31 +112,30 @@ fi
 [ X"$operation" = "Xupgrade" -a -z "$up_what" ] && up_what=conf
 
 
-log ""
+log " "
+log " "
 log "INFO: ========================================== `basename $0` =========================================="
+
+
+
 if [ X"$operation" = "Xdeploy" ] ; then
     log "INFO: run_timestamp=$run_timestamp modules=$modules operation=$operation stop_after=$stop_after"
-else
-    log "INFO: run_timestamp=$run_timestamp modules=$modules operation=$operation upgrade_what=$up_what"
-fi
 
-if [ "X$stop_after" = "Xclean" -o "X$stop_after" = "Xprepare" -o "X$stop_after" = "Xinstall" -o "X$stop_after" = "Xall" ] ; then
-    log "operation=$operation and stop_after=$stop_after, so data will be cleared, are you sure? [yes/no]"
-    read answer
-    if [ X"$answer" != "Xyes" ] ; then
-        log "Your answer ($answer) is not 'yes', exit!"
-        exit 0
-    else
-        log "Your answer is 'yes', continue!"
+    log "INFO: zk_included=$zk_included"
+    log "INFO: hdfs_included=$hdfs_included"
+    log "INFO: hbase_included=$hbase_included"
+
+    if [ "X$stop_after" = "Xclean" -o "X$stop_after" = "Xprepare" -o "X$stop_after" = "Xinstall" -o "X$stop_after" = "Xall" ] ; then
+        log "operation=$operation and stop_after=$stop_after, so data will be cleared, are you sure? [yes/no]"
+        read answer
+        if [ X"$answer" != "Xyes" ] ; then
+            log "Your answer ($answer) is not 'yes', exit!"
+            exit 0
+        else
+            log "Your answer is 'yes', continue!"
+        fi
     fi
-fi
 
-
-log "INFO: zk_included=$zk_included"
-log "INFO: hdfs_included=$hdfs_included"
-log "INFO: hbase_included=$hbase_included"
-
-if [ X"$operation" = "Xdeploy" ] ; then
     parse_configuration $SCRIPT_PDIR/conf/stor-default.conf $SCRIPT_PDIR/conf/stor.conf $LOGS/deploy-$run_timestamp "$modules"
     if [ $? -ne 0 ] ; then
         log "ERROR: parse_configuration failed"
@@ -167,6 +166,12 @@ if [ X"$operation" = "Xdeploy" ] ; then
         fi
     fi
 else
+    log "INFO: run_timestamp=$run_timestamp modules=$modules operation=$operation upgrade_what=$up_what"
+
+    log "INFO: zk_included=$zk_included"
+    log "INFO: hdfs_included=$hdfs_included"
+    log "INFO: hbase_included=$hbase_included"
+
     log "ERROR: upgrade has not been supported yet!"
     exit 1
 fi
