@@ -1,0 +1,17 @@
+[Unit]
+Description=The Hadoop %i daemon
+After=network.target
+PartOf=hadoop.target
+
+[Service]
+Type=forking
+Restart=always
+ExecStart=
+ExecStop=
+User=
+Group=
+LimitNOFILE=32768
+LimitNPROC=65536
+
+[Install]
+WantedBy=multi-user.target hadoop.target
