@@ -131,17 +131,18 @@ if [ "X$stop_after" = "Xclean" -o "X$stop_after" = "Xprepare" -o "X$stop_after" 
     fi
 fi
 
-parse_configuration $SCRIPT_PDIR/conf/stor-default.conf $SCRIPT_PDIR/conf/stor.conf $LOGS/deploy-$run_timestamp "$modules"
-if [ $? -ne 0 ] ; then
-    log "ERROR: parse_configuration failed"
-    exit 1
-fi
 
 log "INFO: zk_included=$zk_included"
 log "INFO: hdfs_included=$hdfs_included"
 log "INFO: hbase_included=$hbase_included"
 
 if [ X"$operation" = "Xdeploy" ] ; then
+    parse_configuration $SCRIPT_PDIR/conf/stor-default.conf $SCRIPT_PDIR/conf/stor.conf $LOGS/deploy-$run_timestamp "$modules"
+    if [ $? -ne 0 ] ; then
+        log "ERROR: parse_configuration failed"
+        exit 1
+    fi
+
     if [ "X$zk_included" = "Xtrue" ] ; then
         deploy_zk "$LOGS/deploy-$run_timestamp" "$stop_after"
         if [ $? -ne 0 ] ; then
