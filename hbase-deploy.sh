@@ -566,7 +566,7 @@ function dispatch_hbase_configs()
         local hbase_env_sh=$hbase_conf_dir/hbase-env.sh.common
         [ -f $hbase_conf_dir/hbase-env.sh.$node ] && hbase_env_sh=$hbase_conf_dir/hbase-env.sh.$node
 
-        local regionservers=$hbase_conf_dir/region-nodes
+        #local regionservers=$hbase_conf_dir/region-nodes
 
         local regionservers_sh=$hbase_conf_dir/regionservers.sh.common
         [ -f $hbase_conf_dir/regionservers.sh.$node ] && regionservers_sh=$hbase_conf_dir/regionservers.sh.$node
@@ -587,7 +587,7 @@ function dispatch_hbase_configs()
         log "INFO: in dispatch_hbase_configs(): for $node: "
         log "INFO: in dispatch_hbase_configs():         hbase_site_xml=$hbase_site_xml"
         log "INFO: in dispatch_hbase_configs():         hbase_env_sh=$hbase_env_sh"
-        log "INFO: in dispatch_hbase_configs():         regionservers=$regionservers"
+        #log "INFO: in dispatch_hbase_configs():         regionservers=$regionservers"
         log "INFO: in dispatch_hbase_configs():         regionservers_sh=$regionservers_sh"
         log "INFO: in dispatch_hbase_configs():         master_backup_sh=$master_backup_sh"
         log "INFO: in dispatch_hbase_configs():         zookeepers_sh=$zookeepers_sh"
@@ -595,7 +595,7 @@ function dispatch_hbase_configs()
         log "INFO: in dispatch_hbase_configs():         hbase_target=$hbase_target"
         log "INFO: in dispatch_hbase_configs():         hbase_service=$hbase_service"
 
-        if [ ! -s $hbase_site_xml -o ! -s $hbase_env_sh -o ! -s $regionservers -o ! -s $regionservers_sh -o ! -s $master_backup_sh -o \
+        if [ ! -s $hbase_site_xml -o ! -s $hbase_env_sh -o ! -s $regionservers_sh -o ! -s $master_backup_sh -o \
              ! -s $zookeepers_sh -o ! -s $hbase_cleanup_sh -o ! -s $hbase_target -o ! -s $hbase_service ] ; then
             log "ERROR: Exit dispatch_hbase_configs(): some config file does not exist or is empty"
             return 1
@@ -608,7 +608,7 @@ function dispatch_hbase_configs()
 
         $SCP $hbase_site_xml    $user@$node:$installation/conf/hbase-site.xml
         $SCP $hbase_env_sh      $user@$node:$installation/conf/hbase-env.sh
-        $SCP $regionservers     $user@$node:$installation/conf/regionservers
+        #$SCP $regionservers     $user@$node:$installation/conf/regionservers
         $SCP $regionservers_sh  $user@$node:$installation/bin/regionservers.sh
         $SCP $master_backup_sh  $user@$node:$installation/bin/master-backup.sh
         $SCP $zookeepers_sh     $user@$node:$installation/bin/zookeepers.sh
@@ -621,7 +621,6 @@ function dispatch_hbase_configs()
         $SSH md5sum                                            \
                   $installation/conf/hbase-site.xml            \
                   $installation/conf/hbase-env.sh              \
-                  $installation/conf/regionservers             \
                   $installation/bin/regionservers.sh           \
                   $installation/bin/master-backup.sh           \
                   $installation/bin/zookeepers.sh              \
@@ -639,7 +638,6 @@ function dispatch_hbase_configs()
         md5sum                       \
                 $hbase_site_xml      \
                 $hbase_env_sh        \
-                $regionservers       \
                 $regionservers_sh    \
                 $master_backup_sh    \
                 $zookeepers_sh       \
@@ -700,131 +698,31 @@ function start_hbase_daemons()
     log "INFO: Enter start_hbase_daemons(): hbase_conf_dir=$hbase_conf_dir"
 
     local hbase_comm_cfg=$hbase_conf_dir/common
-    local hbase_master_nodes=$hbase_conf_dir/name-nodes
-    local hbase_region_nodes=$hbase_conf_dir/data-nodes
-    local hbase_journal_nodes=$hbase_conf_dir/journal-nodes
+    local hbase_nodes=$hbase_conf_dir/nodes
+    local hbase_master_nodes=$hbase_conf_dir/master-nodes
+    local hbase_region_nodes=$hbase_conf_dir/region-nodes
 
-    local sshErr=`mktemp --suffix=-stor-deploy.dispatch_cfg`
+    local sshErr=`mktemp --suffix=-stor-deploy.start_hbase`
 
-    #Step-1: start all journal nodes
-    for node in `cat $hbase_journal_nodes` ; do
-        local node_cfg=$hbase_comm_cfg
-        [ -f $hbase_conf_dir/$node ] && node_cfg=$hbase_conf_dir/$node
-
-        local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
-        local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
-
-        local SSH="ssh -p $ssh_port $user@$node"
-
-        log "INFO: $SSH systemctl start hbase@journalnode"
-        $SSH "systemctl start hbase@journalnode" 2> $sshErr
-        if [ -s "$sshErr" ] ; then
-            log "ERROR: Exit start_hbase_daemons(): error occurred when starting journal-node on $node. See $sshErr for details"
-            return 1
-        fi
-    done
-
-    #select one namenode as master and the other as standby
-    local master_nn_ssh=""
-    local master_nn_install=""
-
-    local standby_nn_ssh=""
-    local standby_nn_install=""
-
+    #Step-1: start all master nodes
     for node in `cat $hbase_master_nodes` ; do
         local node_cfg=$hbase_comm_cfg
         [ -f $hbase_conf_dir/$node ] && node_cfg=$hbase_conf_dir/$node
 
-        local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
-        local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
         local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
         local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
 
-        local installation=`basename $package`
-        installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//' -e 's/-bin//'`
-        installation=$install_path/$installation
-
         local SSH="ssh -p $ssh_port $user@$node"
 
-        if [ -z "$master_nn_ssh" ] ; then
-            master_nn_ssh="$SSH"
-            master_nn_install="$installation"
-        elif [ -z "$standby_nn_ssh" ] ; then
-            standby_nn_ssh="$SSH"
-            standby_nn_install="$installation"
-        else
-            log "ERROR: Exit start_hbase_daemons(): more than two namenodes configured. Currently only two supported"
+        log "INFO: $SSH systemctl start hbase@master"
+        $SSH "systemctl start hbase@master" 2> $sshErr
+        if [ -s "$sshErr" ] ; then
+            log "ERROR: Exit start_hbase_daemons(): error occurred when starting hbase master on $node. See $sshErr for details"
             return 1
         fi
     done
 
-    if [ -z "$master_nn_ssh" -o -z "$standby_nn_ssh" ] ; then
-        log "ERROR: Exit start_hbase_daemons(): less than two namenodes configured. master_nn_ssh=$master_nn_ssh standby_nn_ssh=$standby_nn_ssh"
-        return 1
-    fi
-
-    #Steps 2-8 are for namenodes;
-
-    #Step-2: format namedb on master namenode, and start master name-node;
-    log "INFO: $master_nn_ssh $master_nn_install/bin/hbase namenode -format -force"
-    $master_nn_ssh "$master_nn_install/bin/hbase namenode -format -force" 2> $sshErr
-    grep "INFO util.ExitUtil: Exiting with status 0" $sshErr > /dev/null 2>&1
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit start_hbase_daemons(): failed to format namedb on master name-node. See $sshErr for details"
-        return 1
-    fi
-
-    #Step-3: start master name-node
-    log "INFO: $master_nn_ssh systemctl start hbase@namenode"
-    $master_nn_ssh "systemctl start hbase@namenode" 2> $sshErr
-    if [ -s "$sshErr" ] ; then
-        log "ERROR: Exit start_hbase_daemons(): error occurred when starting master name-node. See $sshErr for details"
-        return 1
-    fi
-
-    #Step-4: bootstrap standby name-node
-    log "INFO: $standby_nn_ssh $standby_nn_install/bin/hbase namenode -bootstrapStandby -force"
-    $standby_nn_ssh "$standby_nn_install/bin/hbase namenode -bootstrapStandby -force" 2> $sshErr
-    grep "util.ExitUtil: Exiting with status 0" $sshErr > /dev/null 2>&1
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit start_hbase_daemons(): error occurred when bootstrap standby name-node. See $sshErr for details"
-        return 1
-    fi
-
-    #Step-5: formatZK on master name-node
-    log "INFO: $master_nn_ssh $master_nn_install/bin/hbase zkfc -formatZK -force"
-    $master_nn_ssh "$master_nn_install/bin/hbase zkfc -formatZK -force" 2> $sshErr
-    grep "Successfully created.*in ZK" $sshErr > /dev/null 2>&1
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit start_hbase_daemons(): error occurred when formatZK on master name-node. See $sshErr for details"
-        return 1
-    fi
-
-    #Step-6: start zkfc on master name-node
-    log "INFO: $master_nn_ssh systemctl start hbase@zkfc"
-    $master_nn_ssh "systemctl start hbase@zkfc" 2> $sshErr
-    if [ -s "$sshErr" ] ; then
-        log "ERROR: Exit start_hbase_daemons(): error occurred when starting zkfc on master name-node. See $sshErr for details"
-        return 1
-    fi
-    
-    #Step-7: start standby name-node
-    log "INFO: $standby_nn_ssh systemctl start hbase@namenode"
-    $standby_nn_ssh "systemctl start hbase@namenode" 2> $sshErr
-    if [ -s "$sshErr" ] ; then
-        log "ERROR: Exit start_hbase_daemons(): error occurred when starting standby name-node. See $sshErr for details"
-        return 1
-    fi
-
-    #Step-8: start zkfc on standby name-node
-    log "INFO: $standby_nn_ssh systemctl start hbase@zkfc"
-    $standby_nn_ssh "systemctl start hbase@zkfc" 2> $sshErr
-    if [ -s "$sshErr" ] ; then
-        log "ERROR: Exit start_hbase_daemons(): error occurred when starting zkfc on standby name-node. See $sshErr for details"
-        return 1
-    fi
-
-    #Step-9: start all data-nodes
+    #Step-2: start all regionservers 
     for node in `cat $hbase_region_nodes` ; do
         local node_cfg=$hbase_comm_cfg
         [ -f $hbase_conf_dir/$node ] && node_cfg=$hbase_conf_dir/$node
@@ -834,10 +732,28 @@ function start_hbase_daemons()
 
         local SSH="ssh -p $ssh_port $user@$node"
 
-        log "INFO: $SSH systemctl start hbase@datanode"
-        $SSH "systemctl start hbase@datanode" 2> $sshErr
+        log "INFO: $SSH systemctl start hbase@regionserver"
+        $SSH "systemctl start hbase@regionserver" 2> $sshErr
         if [ -s "$sshErr" ] ; then
-            log "ERROR: Exit start_hbase_daemons(): error occurred when starting datanode on $node. See $sshErr for details"
+            log "ERROR: Exit start_hbase_daemons(): error occurred when starting hbase regionserver on $node. See $sshErr for details"
+            return 1
+        fi
+    done
+
+    #Step-3: start all thrift2 servers 
+    for node in `cat $hbase_nodes` ; do
+        local node_cfg=$hbase_comm_cfg
+        [ -f $hbase_conf_dir/$node ] && node_cfg=$hbase_conf_dir/$node
+
+        local user=`grep "user=" $node_cfg | cut -d '=' -f 2-`
+        local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
+
+        local SSH="ssh -p $ssh_port $user@$node"
+
+        log "INFO: $SSH systemctl start hbase@thrift2"
+        $SSH "systemctl start hbase@thrift2" 2> $sshErr
+        if [ -s "$sshErr" ] ; then
+            log "ERROR: Exit start_hbase_daemons(): error occurred when starting hbase thrift2 on $node. See $sshErr for details"
             return 1
         fi
     done
@@ -855,9 +771,8 @@ function check_hbase_status()
 
     local hbase_comm_cfg=$hbase_conf_dir/common
     local hbase_nodes=$hbase_conf_dir/nodes
-    local hbase_master_nodes=$hbase_conf_dir/name-nodes
-    local hbase_region_nodes=$hbase_conf_dir/data-nodes
-    local hbase_journal_nodes=$hbase_conf_dir/journal-nodes
+    local hbase_master_nodes=$hbase_conf_dir/master-nodes
+    local hbase_region_nodes=$hbase_conf_dir/region-nodes
 
     local sshErr=`mktemp --suffix=-stor-deploy.chk_hbase`
     local java_processes=`mktemp --suffix=-stor-deploy.chk_hbase_jps`
@@ -885,77 +800,31 @@ function check_hbase_status()
 
         $SSH jps > $java_processes 2>&1
 
-        #Step-1: check name nodes
+        #Step-1: check master
         grep -w $node $hbase_master_nodes > /dev/null 2>&1
         if [ $? -eq 0 ] ; then
-            grep -w "NameNode" $java_processes > /dev/null 2>&1
+            grep -w "HMaster" $java_processes > /dev/null 2>&1
             if [ $? -ne 0 ] ; then
-                log "ERROR: Exit check_hbase_status(): NameNode was not found on $node. See $java_processes for details"
-                return 1
-            fi
-            grep -w "DFSZKFailoverController" $java_processes > /dev/null 2>&1
-            if [ $? -ne 0 ] ; then
-                log "ERROR: Exit check_hbase_status(): DFSZKFailoverController was not found on $node. See $java_processes for details"
-                return 1
-            fi
-
-            #$node is namenode, we run haadmin on it, checking status of all namenodes.
-            local nns=`grep "hbase-site:dfs.ha.namenodes" $node_cfg | cut -d '=' -f 2- | sed -e 's/,/ /g'`
-            if [ -z "$nns" ] ; then
-                log "ERROR: Exit check_hbase_status(): hbase-site:dfs.ha.namenodes.{nameservice} was not configured corretly. See $node_cfg for details"
-                return 1
-            fi
-
-            local active_found=""
-            local standby_found=""
-            for nn in $nns ; do
-                log "INFO: $SSH $installation/bin/hbase haadmin -getServiceState $nn"
-                $SSH "$installation/bin/hbase haadmin -getServiceState $nn" > $sshErr 2>&1
-                grep -i -w "Active" $sshErr > /dev/null 2>&1
-                if [ $? -eq 0 ] ; then
-                    active_found="true"
-                else
-                    grep -i -w "Standby" $sshErr > /dev/null 2>&1
-                    if [ $? -eq 0 ] ; then
-                        standby_found="true"
-                    else
-                        log "ERROR: Exit check_hbase_status(): failed to get service state of $nn. See $sshErr for details"
-                        return 1
-                    fi
-                fi
-
-                log "INFO: $SSH $installation/bin/hbase haadmin -checkHealth $nn && echo yes"
-                $SSH "$installation/bin/hbase haadmin -checkHealth $nn && echo yes" | grep -w "yes" > /dev/null 2>&1
-                if [ $? -ne 0 ] ; then
-                    log "ERROR: Exit check_hbase_status(): $nn is not healthy."
-                    return 1
-                fi
-            done
-
-            if [ -z "$standby_found" -o -z "$active_found" ] ; then
-                log "ERROR: Exit check_hbase_status(): didn't find active namenode or standby namenode. See $sshErr for details"
+                log "ERROR: Exit check_hbase_status(): HMaster was not found on $node. See $java_processes for details"
                 return 1
             fi
         fi
 
-        #Step-2: check journal nodes
-        grep -w $node $hbase_journal_nodes > /dev/null 2>&1
-        if [ $? -eq 0 ] ; then
-            grep -w "JournalNode" $java_processes > /dev/null 2>&1
-            if [ $? -ne 0 ] ; then
-                log "ERROR: Exit check_hbase_status(): JournalNode was not found on $node. See $java_processes for details"
-                return 1
-            fi
-        fi
-
-        #Step-3: check data nodes
+        #Step-2: check regionserver
         grep -w $node $hbase_region_nodes > /dev/null 2>&1
         if [ $? -eq 0 ] ; then
-            grep -w "DataNode" $java_processes > /dev/null 2>&1
+            grep -w "HRegionServer" $java_processes > /dev/null 2>&1
             if [ $? -ne 0 ] ; then
-                log "ERROR: Exit check_hbase_status(): DataNode was not found on $node. See $java_processes for details"
+                log "ERROR: Exit check_hbase_status(): HRegionServer was not found on $node. See $java_processes for details"
                 return 1
             fi
+        fi
+
+        #Step-3: check thrift2
+        grep -w "ThriftServer" $java_processes > /dev/null 2>&1
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit check_hbase_status(): ThriftServer was not found on $node. See $java_processes for details"
+            return 1
         fi
     done
 
