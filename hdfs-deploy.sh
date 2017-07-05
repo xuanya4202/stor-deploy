@@ -827,7 +827,7 @@ function start_hdfs_daemons()
     local hdfs_data_nodes=$hdfs_conf_dir/data-nodes
     local hdfs_journal_nodes=$hdfs_conf_dir/journal-nodes
 
-    local sshErr=`mktemp --suffix=-stor-deploy.dispatch_cfg`
+    local sshErr=`mktemp --suffix=-stor-deploy.start_hdfs`
 
     #Step-1: start all journal nodes
     for node in `cat $hdfs_journal_nodes` ; do
