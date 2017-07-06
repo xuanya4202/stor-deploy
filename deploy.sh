@@ -20,6 +20,7 @@ modules=
 operation=
 stop_after=
 up_what=
+conf_dir=
 
 zk_included=
 hdfs_included=
@@ -27,14 +28,15 @@ hbase_included=
 
 function usage()
 {
-    echo "Usage: $0 -m {modules} -o {operation} [-s {stop-after}] [-u {upgrade-what}]"
+    echo "Usage: $0 -m {modules} -o {operation} [-s {stop-after}] [-u {upgrade-what}] [-d {conf-dir}]"
     echo "    -m modules      : one or more modules in zk, hdfs and hbase, separated by comma"
     echo "                      such as 'zk' or 'zk,hdfs' or 'zk,hdfs,hbase'"
     echo "    -o operation    : deploy|upgrade"
     echo "    -s stop-after   : parse|check|clean|prepare|install|all"
-    echo "                      only useful when operation=deploy; by default, stop-after=parse"
+    echo "                      only useful when operation=deploy; by default, {stop-after}=parse"
     echo "    -u upgrade-what : conf|package"
-    echo "                      only useful when operation=upgrade; by default, upgrade-what=conf"
+    echo "                      only useful when operation=upgrade; by default, {upgrade-what}=conf"
+    echo "    -d conf-dir     : the directory containing stor.conf and stor-default.conf; by default, {conf-dir}=./conf"
 }
 
 
@@ -51,6 +53,9 @@ while getopts "m:o:s:u:h" opt ; do
             ;;
         u)
             up_what=$OPTARG
+            ;;
+        d)
+            conf_dir=$OPTARG
             ;;
         h)
             usage
@@ -111,6 +116,7 @@ fi
 [ X"$operation" = "Xdeploy" -a -z "$stop_after" ] && stop_after=parse
 [ X"$operation" = "Xupgrade" -a -z "$up_what" ] && up_what=conf
 
+[ -z "$conf_dir" ] && conf_dir=$SCRIPT_PDIR/conf
 
 log " "
 log " "
@@ -136,7 +142,7 @@ if [ X"$operation" = "Xdeploy" ] ; then
         fi
     fi
 
-    parse_configuration $SCRIPT_PDIR/conf/stor-default.conf $SCRIPT_PDIR/conf/stor.conf $LOGS/deploy-$run_timestamp "$modules"
+    parse_configuration $conf_dir/stor-default.conf $conf_dir/stor.conf $LOGS/deploy-$run_timestamp "$modules"
     if [ $? -ne 0 ] ; then
         log "ERROR: parse_configuration failed"
         exit 1

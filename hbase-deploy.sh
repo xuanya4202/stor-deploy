@@ -548,12 +548,14 @@ function dispatch_hbase_configs()
         local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
         local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
         local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
+        local hadoop_home=`grep "hadoop_home=" $node_cfg | cut -d '=' -f 2-`
 
         log "INFO: in dispatch_hbase_configs(): node=$node node_cfg=$node_cfg"
         log "INFO:        user=$user"
         log "INFO:        ssh_port=$ssh_port"
         log "INFO:        install_path=$install_path"
         log "INFO:        package=$package"
+        log "INFO:        hadoop_home=$hadoop_home"
 
         local installation=`basename $package`
         installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//' -e 's/-bin//'`
@@ -652,6 +654,15 @@ function dispatch_hbase_configs()
             return 1
         fi
         rm -f $remoteMD5 $localMD5
+
+        #link core-site.xml and hdfs-site.xml from hadoop to hbase
+        local hdfs_cfg=$hadoop_home/etc/hadoop
+        log "INFO: $SSH ln -s $hdfs_cfg/core-site.xml $installation/conf/core-site.xml ; ln -s $hdfs_cfg/hdfs-site.xml $installation/conf/hdfs-site.xml"
+        $SSH "ln -s $hdfs_cfg/core-site.xml $installation/conf/core-site.xml ; ln -s $hdfs_cfg/hdfs-site.xml $installation/conf/hdfs-site.xml" 2> $sshErr
+        if [ -s "$sshErr" ] ; then
+            log "ERROR: Exit dispatch_hbase_configs(): failed to link core-site.xml and hdfs-site.xml. See $sshErr for details"
+            return 1
+        fi
 
         #reload and enable hbase daemons;
         local enable_services="hbase@thrift2.service"
