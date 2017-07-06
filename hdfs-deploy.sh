@@ -400,8 +400,8 @@ function cleanup_hdfs_node()
         systemctl_files="$systemctl_files /usr/lib/systemd/system/$systemctl_cfg /etc/systemd/system/$systemctl_cfg"
     done
     #Yuanguo: fast test
-    #$SSH "mkdir -p $backup ; mv -f $installation $systemctl_files $backup" 2> /dev/null
-    $SSH "mkdir -p $backup ; mv -f $systemctl_files $backup" 2> /dev/null
+    $SSH "mkdir -p $backup ; mv -f $installation $systemctl_files $backup" 2> /dev/null
+    #$SSH "mkdir -p $backup ; mv -f $systemctl_files $backup" 2> /dev/null
 
     log "INFO: in cleanup_hdfs_node(): reload daemon: $SSH systemctl daemon-reload"
     $SSH systemctl daemon-reload 2> $sshErr 
@@ -411,8 +411,8 @@ function cleanup_hdfs_node()
     fi
 
     #Yuanguo: fast test
-    #$SSH ls $installation $systemctl_files > $sshErr 2>&1
-    $SSH ls $systemctl_files > $sshErr 2>&1
+    $SSH ls $installation $systemctl_files > $sshErr 2>&1
+    #$SSH ls $systemctl_files > $sshErr 2>&1
     sed -i -e '/No such file or directory/ d' $sshErr
     if [ -s $sshErr ] ; then
         log "ERROR: Exit cleanup_hdfs_node(): ssh failed or we failed to remove legacy hadoop installation on $node. See $sshErr for details"
@@ -1197,11 +1197,11 @@ function deploy_hdfs()
     #Step-4: dispatch hdfs package to each node. Note that what's dispatched is the release-package, which doesn't
     #        contain our configurations. We will dispatch the configuation files later.
     #Yuanguo: fast test
-    #dispatch_hdfs_package $hdfs_conf_dir
-    #if [ $? -ne 0 ] ; then
-    #    log "ERROR: Exit deploy_hdfs(): failed to dispatch hadoop package to some node"
-    #    return 1
-    #fi
+    dispatch_hdfs_package $hdfs_conf_dir
+    if [ $? -ne 0 ] ; then
+        log "ERROR: Exit deploy_hdfs(): failed to dispatch hadoop package to some node"
+        return 1
+    fi
 
     #Step-5: dispatch configurations to each hdfs node;
     dispatch_hdfs_configs $hdfs_conf_dir
