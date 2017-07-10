@@ -344,8 +344,15 @@ function cleanup_hbase_node()
             fi
         fi
 
-        log "INFO: in cleanup_hbase_node(): try to stop hbase processes by systemctl: $SSH systemctl stop $systemctl_cfgs"
-        $SSH "systemctl stop $systemctl_cfgs" 2> /dev/null
+        log "INFO: in cleanup_hbase_node(): try to stop hbase processes by systemctl"
+
+        local stop_cmds=""
+        for systemctl_cfg in $systemctl_cfgs ; do
+            stop_cmds="systemctl stop $systemctl_cfg ; $stop_cmds"
+        done
+
+        log "INFO: $SSH $stop_cmds"
+        $SSH "$stop_cmds" 2> /dev/null
         sleep 5
 
         log "INFO: in cleanup_hbase_node(): try to stop hbase processes by kill"
@@ -364,10 +371,13 @@ function cleanup_hbase_node()
     #Step-2: try to remove the legacy hbase installation;
     log "INFO: in cleanup_hbase_node(): remove legacy hbase installation if there is on $node"
 
+    local disable_cmds=""
     for systemctl_cfg in $systemctl_cfgs ; do
-        log "INFO: in cleanup_hbase_node(): disable hbase: $SSH systemctl disable $systemctl_cfg"
-        $SSH "systemctl disable $systemctl_cfg" 2> /dev/null
+        disable_cmds="systemctl disable $systemctl_cfg ; $disable_cmds"
     done
+
+    log "INFO: $SSH $disable_cmds"
+    $SSH "$disable_cmds" 2> /dev/null
 
     local backup=/tmp/hbase-backup-$run_timestamp
     local systemctl_files=""

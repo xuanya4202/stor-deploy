@@ -369,8 +369,15 @@ function cleanup_hdfs_node()
             fi
         fi
 
-        log "INFO: in cleanup_hdfs_node(): try to stop hdfs processes by systemctl: $SSH systemctl stop $systemctl_cfgs"
-        $SSH "systemctl stop $systemctl_cfgs" 2> /dev/null
+        log "INFO: in cleanup_hdfs_node(): try to stop hdfs processes by systemctl"
+
+        local stop_cmds=""
+        for systemctl_cfg in $systemctl_cfgs ; do
+            stop_cmds="systemctl stop $systemctl_cfg ; $stop_cmds"
+        done
+
+        log "INFO: $SSH $stop_cmds"
+        $SSH "$stop_cmds" 2> /dev/null
         sleep 5
 
         log "INFO: in cleanup_hdfs_node(): try to stop hdfs processes by kill"
@@ -389,10 +396,13 @@ function cleanup_hdfs_node()
     #Step-2: try to remove the legacy hadoop installation;
     log "INFO: in cleanup_hdfs_node(): remove legacy hadoop installation if there is on $node"
 
+    local disable_cmds=""
     for systemctl_cfg in $systemctl_cfgs ; do
-        log "INFO: in cleanup_hdfs_node(): disable hdfs: $SSH systemctl disable $systemctl_cfg"
-        $SSH "systemctl disable $systemctl_cfg" 2> /dev/null
+        disable_cmds="systemctl disable $systemctl_cfg ; $disable_cmds"
     done
+
+    log "INFO: $SSH $disable_cmds"
+    $SSH "$disable_cmds" 2> /dev/null
 
     local backup=/tmp/hadoop-backup-$run_timestamp
     local systemctl_files=""
@@ -541,9 +551,17 @@ function prepare_hdfs_node()
         fi
 
         for adir in $dn_data_dir ; do
+            log "INFO: $SSH rm -fr $adir/*"
             $SSH rm -fr $adir/* 2> $sshErr
             if [ -s $sshErr ] ; then
                 log "ERROR: Exit prepare_hdfs_node(): failed to rm legacy data for data-node $node. See $sshErr for details"
+                return 1
+            fi
+
+            log "INFO: $SSH ls $adir/"
+            $SSH ls $adir/ > $sshErr 2>&1
+            if [ -s $sshErr ] ; then
+                log "ERROR: Exit prepare_hdfs_node(): legacy data still exists after deletion for data-node $node. See $sshErr for details"
                 return 1
             fi
         done
