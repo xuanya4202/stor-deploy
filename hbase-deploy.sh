@@ -558,14 +558,12 @@ function dispatch_hbase_configs()
         local ssh_port=`grep "ssh_port=" $node_cfg | cut -d '=' -f 2-`
         local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
         local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
-        local hadoop_home=`grep "hadoop_home=" $node_cfg | cut -d '=' -f 2-`
 
         log "INFO: in dispatch_hbase_configs(): node=$node node_cfg=$node_cfg"
         log "INFO:        user=$user"
         log "INFO:        ssh_port=$ssh_port"
         log "INFO:        install_path=$install_path"
         log "INFO:        package=$package"
-        log "INFO:        hadoop_home=$hadoop_home"
 
         local installation=`basename $package`
         installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//' -e 's/-bin//'`
@@ -577,6 +575,15 @@ function dispatch_hbase_configs()
 
         local hbase_env_sh=$hbase_conf_dir/hbase-env.sh.common
         [ -f $hbase_conf_dir/hbase-env.sh.$node ] && hbase_env_sh=$hbase_conf_dir/hbase-env.sh.$node
+
+        # we need to copy core-site.xml.common and hdfs-site.xml.common to ${HBASE_HOME}/conf/core-site.xml and
+        # ${HBASE_HOME}/conf/hdfs-site.xml
+        local hdfs_core_site=$hbase_conf_dir/../hdfs/core-site.xml.common
+        local hdfs_hdfs_site=$hbase_conf_dir/../hdfs/hdfs-site.xml.common
+        if [ ! -s $hdfs_core_site -o ! -s $hdfs_hdfs_site ] ; then
+            log "ERROR: Exit dispatch_hbase_configs(): didn't found hdfs core-site.xml.common and/or hdfs-site.xml.common at $hbase_conf_dir/../hdfs"
+            return 1
+        fi
 
         #local regionservers=$hbase_conf_dir/region-nodes
 
@@ -596,9 +603,12 @@ function dispatch_hbase_configs()
         local hbase_service=$hbase_conf_dir/hbase@.service.common
         [ -f $hbase_conf_dir/hbase@.service.$node ] && hbase_service=$hbase_conf_dir/hbase@.service.$node
 
+
         log "INFO: in dispatch_hbase_configs(): for $node: "
         log "INFO: in dispatch_hbase_configs():         hbase_site_xml=$hbase_site_xml"
         log "INFO: in dispatch_hbase_configs():         hbase_env_sh=$hbase_env_sh"
+        log "INFO: in dispatch_hbase_configs():         hdfs_core_site=$hdfs_core_site"
+        log "INFO: in dispatch_hbase_configs():         hdfs_hdfs_site=$hdfs_hdfs_site"
         #log "INFO: in dispatch_hbase_configs():         regionservers=$regionservers"
         log "INFO: in dispatch_hbase_configs():         regionservers_sh=$regionservers_sh"
         log "INFO: in dispatch_hbase_configs():         master_backup_sh=$master_backup_sh"
@@ -620,6 +630,8 @@ function dispatch_hbase_configs()
 
         $SCP $hbase_site_xml    $user@$node:$installation/conf/hbase-site.xml
         $SCP $hbase_env_sh      $user@$node:$installation/conf/hbase-env.sh
+        $SCP $hdfs_core_site    $user@$node:$installation/conf/core-site.xml
+        $SCP $hdfs_hdfs_site    $user@$node:$installation/conf/hdfs-site.xml
         #$SCP $regionservers     $user@$node:$installation/conf/regionservers
         $SCP $regionservers_sh  $user@$node:$installation/bin/regionservers.sh
         $SCP $master_backup_sh  $user@$node:$installation/bin/master-backup.sh
@@ -633,6 +645,8 @@ function dispatch_hbase_configs()
         $SSH md5sum                                            \
                   $installation/conf/hbase-site.xml            \
                   $installation/conf/hbase-env.sh              \
+                  $installation/conf/core-site.xml             \
+                  $installation/conf/hdfs-site.xml             \
                   $installation/bin/regionservers.sh           \
                   $installation/bin/master-backup.sh           \
                   $installation/bin/zookeepers.sh              \
@@ -650,6 +664,8 @@ function dispatch_hbase_configs()
         md5sum                       \
                 $hbase_site_xml      \
                 $hbase_env_sh        \
+                $hdfs_core_site      \
+                $hdfs_hdfs_site      \
                 $regionservers_sh    \
                 $master_backup_sh    \
                 $zookeepers_sh       \
@@ -664,15 +680,6 @@ function dispatch_hbase_configs()
             return 1
         fi
         rm -f $remoteMD5 $localMD5
-
-        #link core-site.xml and hdfs-site.xml from hadoop to hbase
-        local hdfs_cfg=$hadoop_home/etc/hadoop
-        log "INFO: $SSH ln -s $hdfs_cfg/core-site.xml $installation/conf/core-site.xml ; ln -s $hdfs_cfg/hdfs-site.xml $installation/conf/hdfs-site.xml"
-        $SSH "ln -s $hdfs_cfg/core-site.xml $installation/conf/core-site.xml ; ln -s $hdfs_cfg/hdfs-site.xml $installation/conf/hdfs-site.xml" 2> $sshErr
-        if [ -s "$sshErr" ] ; then
-            log "ERROR: Exit dispatch_hbase_configs(): failed to link core-site.xml and hdfs-site.xml. See $sshErr for details"
-            return 1
-        fi
 
         #reload and enable hbase daemons;
         local enable_services="hbase@thrift2.service"

@@ -122,7 +122,9 @@ log " "
 log " "
 log "INFO: ========================================== `basename $0` =========================================="
 
-
+parsed_conf=$LOGS/parsed-config
+rm -fr $parsed_conf || return 1
+mkdir -p $parsed_conf || return 1
 
 if [ X"$operation" = "Xdeploy" ] ; then
     log "INFO: run_timestamp=$run_timestamp modules=$modules operation=$operation stop_after=$stop_after"
@@ -142,14 +144,14 @@ if [ X"$operation" = "Xdeploy" ] ; then
         fi
     fi
 
-    parse_configuration $conf_dir/stor-default.conf $conf_dir/stor.conf $LOGS/deploy-$run_timestamp "$modules"
+    parse_configuration $conf_dir/stor-default.conf $conf_dir/stor.conf $parsed_conf "$modules"
     if [ $? -ne 0 ] ; then
         log "ERROR: parse_configuration failed"
         exit 1
     fi
 
     if [ "X$zk_included" = "Xtrue" ] ; then
-        deploy_zk "$LOGS/deploy-$run_timestamp" "$stop_after"
+        deploy_zk "$parsed_conf" "$stop_after"
         if [ $? -ne 0 ] ; then
             log "ERROR: deploy_zk failed"
             exit 1
@@ -157,7 +159,7 @@ if [ X"$operation" = "Xdeploy" ] ; then
     fi
     
     if [ "X$hdfs_included" = "Xtrue" ] ; then
-        deploy_hdfs "$LOGS/deploy-$run_timestamp" "$stop_after" "$zk_included"
+        deploy_hdfs "$parsed_conf" "$stop_after" "$zk_included"
         if [ $? -ne 0 ] ; then
             log "ERROR: deploy_hdfs failed"
             exit 1
@@ -165,7 +167,7 @@ if [ X"$operation" = "Xdeploy" ] ; then
     fi
     
     if [ "X$hbase_included" = "Xtrue" ] ; then
-        deploy_hbase "$LOGS/deploy-$run_timestamp" "$stop_after" "$zk_included"
+        deploy_hbase "$parsed_conf" "$stop_after" "$zk_included"
         if [ $? -ne 0 ] ; then
             log "ERROR: deploy_hbase failed"
             exit 1
