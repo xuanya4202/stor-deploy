@@ -37,18 +37,17 @@ function check_zk_node()
     return 0
 }
 
-function cleanup_zk_node()
+function stop_zk()
 {
     #user must be 'root' for now, so we don't use sudo;
     local node=$1
     local user=$2
     local ssh_port=$3
-    local installation=$4
 
-    log "INFO: Enter cleanup_zk_node(): node=$node user=$user ssh_port=$ssh_port installation=$installation"
+    log "INFO: Enter stop_zk(): node=$node user=$user ssh_port=$ssh_port"
 
     local SSH="ssh -p $ssh_port $user@$node"
-    local sshErr=`mktemp --suffix=-stor-deploy.zk_clean`
+    local sshErr=`mktemp --suffix=-stor-deploy.zk_stop`
 
     #Step-1: try to stop running zookeeper process if found.
     local succ=""
@@ -56,65 +55,84 @@ function cleanup_zk_node()
     for r in {1..4} ; do
         zk_pid=`$SSH jps 2> $sshErr | grep QuorumPeerMain | cut -d ' ' -f 1`
         if [ -s "$sshErr" ] ; then
-            log "ERROR: Exit cleanup_zk_node(): failed to find running zookeepr on $node. See $sshErr for details"
+            log "ERROR: Exit stop_zk(): failed to find running zookeepr on $node. See $sshErr for details"
             return 1
         fi
 
         if [ -z "$zk_pid" ] ; then
             $SSH "systemctl status zookeepr" | grep "Active: active (running)" > /dev/null 2>&1
             if [ $? -ne 0 ] ; then # didn't find
-                log "INFO: in cleanup_zk_node(): didn't find running zookeepr on $node"
+                log "INFO: in stop_zk(): didn't find running zookeepr on $node"
                 succ="true"
                 break
             fi
         fi
 
-        log "INFO: in cleanup_zk_node(): try to stop zookeeper by systemctl: $SSH systemctl stop zookeeper"
+        log "INFO: in stop_zk(): try to stop zookeeper by systemctl: $SSH systemctl stop zookeeper"
         $SSH systemctl stop zookeeper 2> /dev/null
         sleep 2
 
-        log "INFO: in cleanup_zk_node(): try to stop zookeeper by kill"
+        log "INFO: in stop_zk(): try to stop zookeeper by kill"
         $SSH kill -9 $zk_pid 2> /dev/null
         sleep 2
     done
 
     if [ "X$succ" != "Xtrue" ] ; then
-        log "ERROR: Exit cleanup_zk_node(): failed to stop zookeeper on $onde. zk_pid=$zk_pid"
+        log "ERROR: Exit stop_zk(): failed to stop zookeeper on $onde. zk_pid=$zk_pid"
         return 1
     fi
 
-    #Step-2: try to remove the legacy zookeeper installation;
-    log "INFO: in cleanup_zk_node(): remove legacy zookeeper installation if there is on $node"
+    rm -f $sshErr
+
+    log "INFO: Exit stop_zk(): Success"
+    return 0
+}
+
+function uninstall_zk()
+{
+    #user must be 'root' for now, so we don't use sudo;
+    local node=$1
+    local user=$2
+    local ssh_port=$3
+    local installation=$4
+
+    log "INFO: Enter uninstall_zk(): node=$node user=$user ssh_port=$ssh_port installation=$installation"
+
+    local SSH="ssh -p $ssh_port $user@$node"
+    local sshErr=`mktemp --suffix=-stor-deploy.zk_uninstall`
+
+    #Step-1: try to remove the legacy zookeeper installation;
+    log "INFO: in uninstall_zk(): remove legacy zookeeper installation if there is on $node"
     local backup=/tmp/zookeeper-backup-$run_timestamp
 
-    log "INFO: in cleanup_zk_node(): disable zookeeper: $SSH systemctl disable zookeeper"
+    log "INFO: in uninstall_zk(): disable zookeeper: $SSH systemctl disable zookeeper"
     $SSH systemctl disable zookeeper 2> /dev/null
 
     $SSH "mkdir -p $backup ; mv -f $installation /usr/lib/systemd/system/zookeeper.service /etc/systemd/system/zookeeper.service $backup" 2> /dev/null
 
-    log "INFO: in cleanup_zk_node(): reload daemon: $SSH systemctl daemon-reload"
+    log "INFO: in uninstall_zk(): reload daemon: $SSH systemctl daemon-reload"
     $SSH systemctl daemon-reload 2> $sshErr 
     if [ -s "$sshErr" ] ; then
-        log "ERROR: Exit cleanup_zk_node(): failed to reload daemon on $node. See $sshErr for details"
+        log "ERROR: Exit uninstall_zk(): failed to reload daemon on $node. See $sshErr for details"
         return 1
     fi
 
     $SSH ls $installation /usr/lib/systemd/system/zookeeper.service /etc/systemd/system/zookeeper.service > $sshErr 2>&1
     local n=`cat $sshErr | grep "No such file or directory" | wc -l`
     if [ $n -ne 3 ] ; then
-        log "ERROR: Exit cleanup_zk_node(): ssh failed or we failed to remove legacy zookeeper installation on $node. See $sshErr for details"
+        log "ERROR: Exit uninstall_zk(): ssh failed or we failed to remove legacy zookeeper installation on $node. See $sshErr for details"
         return 1
     fi
 
-    $SSH systemctl status zookeeper 2>&1 | grep -e "could not be found" -e "Loaded: not-found" > /dev/null 2>&1
+    $SSH systemctl status zookeeper 2>&1 | grep -e "missing the instance name" -e "could not be found" -e "Loaded: not-found" > /dev/null 2>&1
     if [ $? -ne 0 ] ; then
-        log "ERROR: Exit cleanup_zk_node(): failed to check zookeeper.service on $node"
+        log "ERROR: Exit uninstall_zk(): failed to check zookeeper.service on $node"
         return 1
     fi
 
     rm -f $sshErr
 
-    log "INFO: Exit cleanup_zk_node(): Success"
+    log "INFO: Exit uninstall_zk(): Success"
     return 0
 }
 
@@ -675,9 +693,10 @@ function check_zk_status()
 function deploy_zk()
 {
     local parsed_conf_dir=$1
-    local stop_after=$2
+    local from=$2
+    local to=$3
 
-    log "INFO: Enter deploy_zk(): parsed_conf_dir=$parsed_conf_dir stop_after=$stop_after"
+    log "INFO: Enter deploy_zk(): parsed_conf_dir=$parsed_conf_dir from=$from to=$to"
 
     local zk_conf_dir=$parsed_conf_dir/zk
     local zk_comm_cfg=$zk_conf_dir/common
@@ -694,18 +713,14 @@ function deploy_zk()
     fi
 
     #Step-1: generate configurations for each zk node;
-    gen_cfg_for_zk_nodes $zk_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_zk(): failed to generate configuration files for each node"
-        return 1
+    if [ $from -le 1 -a $to -ge 1 ] ; then
+        gen_cfg_for_zk_nodes $zk_conf_dir
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit deploy_zk(): failed to generate configuration files for each node"
+            return 1
+        fi
     fi
 
-    if [ "X$stop_after" = "Xparse" ] ; then
-        log "INFO: Exit deploy_zk(): stop early because stop_after=$stop_after"
-        return 0
-    fi
-
-    #Step-2: check zk nodes (such as java environment), clean up zk nodes, and prepare (mount the disks, create the dirs)
     for node in `cat $zk_nodes` ; do
         local node_cfg=$zk_comm_cfg
         [ -f $zk_conf_dir/$node ] && node_cfg=$zk_conf_dir/$node
@@ -747,68 +762,79 @@ function deploy_zk()
         installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
         installation=$install_path/$installation
 
-        #check the node, such as java environment
-        log "INFO: in deploy_zk(): check zk node $node ..."
-        check_zk_node "$node" "$user" "$ssh_port" "$java_home"
-
-        [ "X$stop_after" = "Xcheck" ] && continue
-
-        #clean up zk node
-        log "INFO: in deploy_zk(): clean up zk node $node ..."
-        cleanup_zk_node "$node" "$user" "$ssh_port" "$installation"
-        if [ $? -ne 0 ] ; then
-            log "ERROR: Exit deploy_zk(): cleanup_zk_node failed on $node"
-            return 1
+        #Step-2: check zk nodes (such as java environment)
+        if [ $from -le 2 -a $to -ge 2 ] ; then
+            log "INFO: in deploy_zk(): check zk node $node ..."
+            check_zk_node "$node" "$user" "$ssh_port" "$java_home"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit deploy_zk(): check_zk_node failed on $node"
+                return 1
+            fi
         fi
 
-        [ "X$stop_after" = "Xclean" ] && continue
+        #Step-3: stop zk process
+        if [ $from -le 3 -a $to -ge 3 ] ; then
+            log "INFO: in deploy_zk(): stop zk process on $node ..."
+            stop_zk "$node" "$user" "$ssh_port"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit deploy_zk(): stop_zk failed on $node"
+                return 1
+            fi
+        fi
 
-        #prepare environment
-        log "INFO: in deploy_zk(): prepare zk node $node ..."
-        prepare_zk_node "$node" "$user" "$ssh_port" "$dataDir" "$dataLogDir" "$logdir" "$pidfile" "$install_path" "$mounts" "$mount_opts" "$mkfs_cmd"
-        if [ $? -ne 0 ] ; then
-            log "ERROR: Exit deploy_zk(): prepare_zk_node failed on $node"
-            return 1
+        #Step-4: uninstall existing installation
+        if [ $from -le 4 -a $to -ge 4 ] ; then
+            log "INFO: in deploy_zk(): uninstall zk on $node ..."
+            uninstall_zk "$node" "$user" "$ssh_port" "$installation"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit deploy_zk(): uninstall_zk failed on $node"
+                return 1
+            fi
+        fi
+
+        #Step-5: prepare (mount the disks, create the dirs)
+        if [ $from -le 5 -a $to -ge 5 ] ; then
+            log "INFO: in deploy_zk(): prepare zk node $node ..."
+            prepare_zk_node "$node" "$user" "$ssh_port" "$dataDir" "$dataLogDir" "$logdir" "$pidfile" "$install_path" "$mounts" "$mount_opts" "$mkfs_cmd"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit deploy_zk(): prepare_zk_node failed on $node"
+                return 1
+            fi
         fi
     done
 
-    if [ "X$stop_after" = "Xcheck" -o "X$stop_after" = "Xclean" -o "X$stop_after" = "Xprepare" ] ; then
-        log "INFO: Exit deploy_zk(): stop early because stop_after=$stop_after"
-        return 0
-    fi
-
-    #Step-3: dispatch zk package to each node. Note that what's dispatched is the release-package, which doesn't
+    #Step-6: dispatch zk package to each node. Note that what's dispatched is the release-package, which doesn't
     #        contain our configurations. We will dispatch the configuation files later.
-    dispatch_zk_package $zk_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_zk(): failed to dispatch zookeeper package to some node"
-        return 1
+    if [ $from -le 6 -a $to -ge 6 ] ; then
+        dispatch_zk_package $zk_conf_dir
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit deploy_zk(): failed to dispatch zookeeper package to some node"
+            return 1
+        fi
     fi
 
-    #Step-4: dispatch configurations to each zk node;
-    dispatch_zk_configs $zk_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_zk(): failed to dispatch configuration files to each node"
-        return 1
+    #Step-7: dispatch configurations to each zk node;
+    if [ $from -le 7 -a $to -ge 7 ] ; then
+        dispatch_zk_configs $zk_conf_dir
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit deploy_zk(): failed to dispatch configuration files to each node"
+            return 1
+        fi
     fi
 
-    if [ "X$stop_after" = "Xinstall" ] ; then
-        log "INFO: Exit deploy_zk(): stop early because stop_after=$stop_after"
-        return 0
-    fi
+    #Step-8: start zookeeper servers on each zk node;
+    if [ $from -le 8 -a $to -ge 8 ] ; then
+        start_zk_servers $zk_conf_dir
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit deploy_zk(): failed to start zookeeper server on each node"
+            return 1
+        fi
 
-    #Step-5: start zookeeper servers on each zk node;
-    start_zk_servers $zk_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_zk(): failed to start zookeeper server on each node"
-        return 1
-    fi
-
-    #Step-6: check zookeeper status on each zk node;
-    check_zk_status $zk_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_zk(): failed to check zookeeper status on each node"
-        return 1
+        check_zk_status $zk_conf_dir
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit deploy_zk(): failed to check zookeeper status on each node"
+            return 1
+        fi
     fi
 
     log "INFO: Exit deploy_zk(): Success"

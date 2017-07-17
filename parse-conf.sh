@@ -30,6 +30,22 @@ function map_put()
     return 0
 }
 
+function map_rm()
+{
+    local map=$1
+    local key=$2
+    
+    log "INFO: Enter function map_rm(): map=$map key=$key"
+
+    [ ! -f $map ] && touch $map
+
+    sed -i -e "/^$key=/ d" $map || return 1
+
+    log "INFO: Exit function map_rm(): Success"
+
+    return 0
+}
+
 function map_append()
 {
     local map=$1
@@ -93,9 +109,17 @@ function put_kv_in_map()
 
     key=`echo $key | sed -e 's/[[:space:]]*:[[:space:]]*/:/'`      # " : " => ":"
 
-    if [ -z "$key" -o -z "$val" ] ; then
-        log "WARN: Exit function put_kv_in_map(): key or val is empty. line=\"$line\" key=\"$key\" val=\"$val\""
+    if [ -z "$key" ] ; then
+        log "WARN: Exit function put_kv_in_map(): key is empty. line=\"$line\""
         return 2
+    fi
+
+    if [ -z "$val" ] ; then
+        map_rm "$map" "$key"
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit function put_kv_in_map(): failed to remove key from map. key=\"$key\" map=\"$map\""
+            return 1
+        fi
     fi
 
     map_put "$map" "$key" "$val"   # the "" is necessary, because key/val may contain spaces
@@ -537,13 +561,10 @@ function parse_configuration()
         return 1
     fi
 
-    if [ -f $dest_dir ] ; then
-        log "ERROR: Exit function parse_configuration(): dest dir $dest_dir exists and it's a file"
+    if [ ! -d $dest_dir ] ; then
+        log "ERROR: Exit function parse_configuration(): dest dir $dest_dir does not exist or it's not a dir"
         return 1
     fi
-
-    rm -fr $dest_dir  || return 1
-    mkdir -p $dest_dir || return 1
 
     parse_def_conf "$def_conf" "$dest_dir" "$modules"
     if [ $? -ne 0 ] ; then

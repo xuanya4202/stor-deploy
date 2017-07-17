@@ -17,10 +17,11 @@ LOG_FILE=$LOGS/deploy.log
 run_timestamp=`date +%Y%m%d%H%M%S`
 
 modules=
-operation=
-stop_after=
-up_what=
 conf_dir=
+operation=
+from=
+to=
+up_what=
 
 zk_included=
 hdfs_included=
@@ -28,34 +29,48 @@ hbase_included=
 
 function usage()
 {
-    echo "Usage: $0 -m {modules} -o {operation} [-s {stop-after}] [-u {upgrade-what}] [-d {conf-dir}]"
+    echo "Usage: $0 -m {modules} [-c {conf-dir}] -o {operation} [-f {from}] [-t {to}] [-u {upgrade-what}]"
     echo "    -m modules      : one or more modules in zk, hdfs and hbase, separated by comma"
     echo "                      such as 'zk' or 'zk,hdfs' or 'zk,hdfs,hbase'"
-    echo "    -o operation    : deploy|upgrade"
-    echo "    -s stop-after   : parse|check|clean|prepare|install|all"
-    echo "                      only useful when operation=deploy; by default, {stop-after}=parse"
-    echo "    -u upgrade-what : conf|package"
-    echo "                      only useful when operation=upgrade; by default, {upgrade-what}=conf"
     echo "    -d conf-dir     : the directory containing stor.conf and stor-default.conf; by default, {conf-dir}=./conf"
+    echo "    -o operation    : deploy | upgrade"
+    echo "    -f from -t to   : only used when operation=deploy. deploy consists of multiple steps:"
+    echo "                            parse       : parse the config files in {conf-dir}"
+    echo "                            config      : generate config files for the seleted modules"
+    echo "                            check       : basic environment check, such as if java is available"
+    echo "                            stop        : stop existing processes"
+    echo "                            uninstall   : remove old installation"
+    echo "                            prepare     : do preparation work, such as mounting disks, make clean dirs"
+    echo "                            install_pkg : dispatch software packages"
+    echo "                            install_cfg : dispatch the config files"
+    echo "                            run         : start up the new installation"
+    echo "                      by default {from}=parse"
+    echo "                      by default {to}=run"
+    echo "    -u upgrade-what : only used when operation=upgrade"
+    echo "                            conf    : upgrade the config files, and restart"
+    echo "                            package : upgrade the softwarepackage and config files, and restart"
+    echo "                      by default {upgrade-what}=conf"
 }
 
-
-while getopts "m:o:s:u:h" opt ; do
+while getopts "m:c:o:f:t:u:h" opt ; do
     case $opt in 
         m)
             modules=$OPTARG
             ;;
+        c)
+            conf_dir=$OPTARG
+            ;;
         o)
             operation=$OPTARG
             ;;
-        s)
-            stop_after=$OPTARG
+        f)
+            from=$OPTARG
+            ;;
+        t)
+            to=$OPTARG
             ;;
         u)
             up_what=$OPTARG
-            ;;
-        d)
-            conf_dir=$OPTARG
             ;;
         h)
             usage
@@ -68,8 +83,8 @@ while getopts "m:o:s:u:h" opt ; do
     esac
 done
 
-if [ -z "$modules" -o -z "$operation" ] ; then
-    echo "ERROR: argument 'modules' and 'operation' must be present!"
+if [ -z "$modules" ] ; then
+    echo "ERROR: argument 'modules' must be present!"
     usage
     exit 1
 fi
@@ -95,46 +110,72 @@ for m in `echo $modules | sed -e 's/,/ /g'` ; do
     exit 1
 done
 
-if [ X"$operation" != "Xdeploy" -a X"$operation" != "Xupgrade" ] ; then
+[ -z "$conf_dir" ] && conf_dir=$SCRIPT_PDIR/conf
+if [ ! -d "$conf_dir" ] ; then
+    echo "ERROR: {conf-dir} must be an existing directory"
+    usage
+    exit 1
+fi
+
+
+if [ ! -f $conf_dir/stor-default.conf -a ! -f $conf_dir/stor.conf ] ; then
+    echo "ERROR: at least one of $conf_dir/stor-default.conf and $conf_dir/stor.conf is mandatory"
+    usage
+    exit 1
+fi
+
+if [ -z "$operation" ] ; then
+    echo "ERROR: argument 'operation' must be present!"
+    usage
+    exit 1
+fi
+
+if [ X"$operation" == "Xdeploy" ] ; then
+    steps=("parse" "config" "check" "stop" "uninstall" "prepare" "install_pkg" "install_cfg" "run")
+    [ -z "$from" ] && from=parse
+    [ -z "$to" ] && to=run
+    i=0
+    n=${#steps[@]}
+    found=0
+    while [ $i -lt $n ] ; do
+        [ "X$from" == "X${steps[$i]}" ] && from=$i && found=`expr $found + 1`
+        [ "X$to" == "X${steps[$i]}" ] && to=$i && found=`expr $found + 1`
+        i=`expr $i + 1`
+    done
+
+    if [ $found -ne 2 ] ; then
+        echo "ERROR: argument 'from' or 'to' is invalid!"
+        usage
+        exit 1
+    fi
+elif [ X"$operation" == "Xupgrade" ] ; then
+    if [ X"$up_what" != "Xconf" -a X"$up_what" != "Xpackage" ] ; then
+        echo "ERROR: argument 'upgrade-what' is invalid!"
+        usage
+        exit 1
+    fi
+else
     echo "ERROR: argument 'operation' is invalid: it must be 'deploy' or 'upgrade'"
     usage
     exit 1
 fi
 
-if [ -n "$stop_after" -a  X"$operation" != "Xdeploy" ] ; then
-    echo "ERROR: 'stop-after' can be present only when operation=deploy"
-    usage
-    exit 1
-fi
-
-if [ -n "$up_what" -a  X"$operation" != "Xupgrade" ] ; then
-    echo "ERROR: 'upgrade-what' can be present only when operation=upgrade"
-    usage
-    exit 1
-fi
-
-[ X"$operation" = "Xdeploy" -a -z "$stop_after" ] && stop_after=parse
-[ X"$operation" = "Xupgrade" -a -z "$up_what" ] && up_what=conf
-
-[ -z "$conf_dir" ] && conf_dir=$SCRIPT_PDIR/conf
-
 log " "
 log " "
 log "INFO: ========================================== `basename $0` =========================================="
 
+
 parsed_conf=$LOGS/parsed-config
-rm -fr $parsed_conf || return 1
-mkdir -p $parsed_conf || return 1
 
 if [ X"$operation" = "Xdeploy" ] ; then
-    log "INFO: run_timestamp=$run_timestamp modules=$modules operation=$operation stop_after=$stop_after"
+    log "INFO: run_timestamp=$run_timestamp modules=$modules operation=$operation from=$from to=$to"
 
     log "INFO: zk_included=$zk_included"
     log "INFO: hdfs_included=$hdfs_included"
     log "INFO: hbase_included=$hbase_included"
 
-    if [ "X$stop_after" = "Xclean" -o "X$stop_after" = "Xprepare" -o "X$stop_after" = "Xinstall" -o "X$stop_after" = "Xall" ] ; then
-        log "operation=$operation and stop_after=$stop_after, so data will be cleared, are you sure? [yes/no]"
+    if [ $to -ge 3 ] ; then  #stop or later
+        log "operation=$operation, data will be cleared, are you sure? [yes/no]"
         read answer
         if [ X"$answer" != "Xyes" ] ; then
             log "Your answer ($answer) is not 'yes', exit!"
@@ -144,33 +185,66 @@ if [ X"$operation" = "Xdeploy" ] ; then
         fi
     fi
 
-    parse_configuration $conf_dir/stor-default.conf $conf_dir/stor.conf $parsed_conf "$modules"
-    if [ $? -ne 0 ] ; then
-        log "ERROR: parse_configuration failed"
-        exit 1
-    fi
-
     if [ "X$zk_included" = "Xtrue" ] ; then
-        deploy_zk "$parsed_conf" "$stop_after"
-        if [ $? -ne 0 ] ; then
-            log "ERROR: deploy_zk failed"
-            exit 1
+        if [ $from -le 0 -a $to -ge 0 ] ; then
+            rm -fr $parsed_conf/zk || return 1
+            mkdir -p $parsed_conf/zk || return 1
+
+            parse_configuration $conf_dir/stor-default.conf $conf_dir/stor.conf $parsed_conf "$modules"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: parse_configuration failed"
+                exit 1
+            fi
+        fi
+
+        if [ $to -ge 1 ] ; then
+            deploy_zk "$parsed_conf" $from $to
+            if [ $? -ne 0 ] ; then
+                log "ERROR: deploy_zk failed"
+                exit 1
+            fi
         fi
     fi
     
     if [ "X$hdfs_included" = "Xtrue" ] ; then
-        deploy_hdfs "$parsed_conf" "$stop_after" "$zk_included"
-        if [ $? -ne 0 ] ; then
-            log "ERROR: deploy_hdfs failed"
-            exit 1
+        if [ $from -le 0 -a $to -ge 0 ] ; then
+            rm -fr $parsed_conf/hdfs || return 1
+            mkdir -p $parsed_conf/hdfs || return 1
+
+            parse_configuration $conf_dir/stor-default.conf $conf_dir/stor.conf $parsed_conf "$modules"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: parse_configuration failed"
+                exit 1
+            fi
+        fi
+
+        if [ $to -ge 1 ] ; then
+            deploy_hdfs "$parsed_conf" $from $to "$zk_included"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: deploy_hdfs failed"
+                exit 1
+            fi
         fi
     fi
     
     if [ "X$hbase_included" = "Xtrue" ] ; then
-        deploy_hbase "$parsed_conf" "$stop_after" "$zk_included"
-        if [ $? -ne 0 ] ; then
-            log "ERROR: deploy_hbase failed"
-            exit 1
+        if [ $from -le 0 -a $to -ge 0 ] ; then
+            rm -fr $parsed_conf/hbase || return 1
+            mkdir -p $parsed_conf/hbase || return 1
+
+            parse_configuration $conf_dir/stor-default.conf $conf_dir/stor.conf $parsed_conf "$modules"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: parse_configuration failed"
+                exit 1
+            fi
+        fi
+
+        if [ $to -ge 1 ] ; then
+            deploy_hbase "$parsed_conf" $from $to "$zk_included"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: deploy_hbase failed"
+                exit 1
+            fi
         fi
     fi
 else

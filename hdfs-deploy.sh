@@ -336,17 +336,16 @@ function check_hdfs_node()
     return 0
 } 
 
-function cleanup_hdfs_node()
+function stop_hdfs()
 {
     local node=$1
     local user=$2
     local ssh_port=$3
-    local installation=$4
 
-    log "INFO: Enter cleanup_hdfs_node(): node=$node user=$user ssh_port=$ssh_port installation=$installation"
+    log "INFO: Enter stop_hdfs(): node=$node user=$user ssh_port=$ssh_port"
 
     local SSH="ssh -p $ssh_port $user@$node"
-    local sshErr=`mktemp --suffix=-stor-deploy.hdfs_clean`
+    local sshErr=`mktemp --suffix=-stor-deploy.hdfs_stop`
 
     local systemctl_cfgs="hadoop@journalnode.service hadoop@zkfc.service hadoop@namenode.service hadoop@datanode.service hadoop@.service hadoop.target"
 
@@ -356,20 +355,20 @@ function cleanup_hdfs_node()
     for r in {1..10} ; do
         hdfs_pids=`$SSH jps 2> $sshErr | grep -e NameNode -e DataNode -e DFSZKFailoverController -e JournalNode | cut -d ' ' -f 1`
         if [ -s "$sshErr" ] ; then
-            log "ERROR: Exit cleanup_hdfs_node(): failed to find hdfs processes on $node. See $sshErr for details"
+            log "ERROR: Exit stop_hdfs(): failed to find hdfs processes on $node. See $sshErr for details"
             return 1
         fi
 
         if [ -z "$hdfs_pids" ] ; then
             $SSH "systemctl status $systemctl_cfgs" | grep "Active: active (running)" > /dev/null 2>&1
             if [ $? -ne 0 ] ; then # didn't find
-                log "INFO: in cleanup_hdfs_node(): didn't find hdfs processes on $node"
+                log "INFO: in stop_hdfs(): didn't find hdfs processes on $node"
                 succ="true"
                 break
             fi
         fi
 
-        log "INFO: in cleanup_hdfs_node(): try to stop hdfs processes by systemctl"
+        log "INFO: in stop_hdfs(): try to stop hdfs processes by systemctl"
 
         local stop_cmds=""
         for systemctl_cfg in $systemctl_cfgs ; do
@@ -380,7 +379,7 @@ function cleanup_hdfs_node()
         $SSH "$stop_cmds" 2> /dev/null
         sleep 5
 
-        log "INFO: in cleanup_hdfs_node(): try to stop hdfs processes by kill"
+        log "INFO: in stop_hdfs(): try to stop hdfs processes by kill"
         for hdfs_pid in $hdfs_pids ; do
             log "INFO: $SSH kill -9 $hdfs_pid"
             $SSH kill -9 $hdfs_pid 2> /dev/null
@@ -389,12 +388,32 @@ function cleanup_hdfs_node()
     done
 
     if [ "X$succ" != "Xtrue" ] ; then
-        log "ERROR: Exit cleanup_hdfs_node(): failed to stop hdfs processes on $node hdfs_pids=$hdfs_pids"
+        log "ERROR: Exit stop_hdfs(): failed to stop hdfs processes on $node hdfs_pids=$hdfs_pids"
         return 1
     fi
 
-    #Step-2: try to remove the legacy hadoop installation;
-    log "INFO: in cleanup_hdfs_node(): remove legacy hadoop installation if there is on $node"
+    rm -f $sshErr
+
+    log "INFO: Exit stop_hdfs(): Success"
+    return 0
+}
+
+function uninstall_hdfs()
+{
+    local node=$1
+    local user=$2
+    local ssh_port=$3
+    local installation=$4
+
+    log "INFO: Enter uninstall_hdfs(): node=$node user=$user ssh_port=$ssh_port installation=$installation"
+
+    local SSH="ssh -p $ssh_port $user@$node"
+    local sshErr=`mktemp --suffix=-stor-deploy.hdfs_uninstall`
+
+    local systemctl_cfgs="hadoop@journalnode.service hadoop@zkfc.service hadoop@namenode.service hadoop@datanode.service hadoop@.service hadoop.target"
+
+    #Step-1: try to remove the legacy hadoop installation;
+    log "INFO: in uninstall_hdfs(): remove legacy hadoop installation if there is on $node"
 
     local disable_cmds=""
     for systemctl_cfg in $systemctl_cfgs ; do
@@ -409,38 +428,34 @@ function cleanup_hdfs_node()
     for systemctl_cfg in $systemctl_cfgs ; do
         systemctl_files="$systemctl_files /usr/lib/systemd/system/$systemctl_cfg /etc/systemd/system/$systemctl_cfg"
     done
-    #Yuanguo: fast test
     $SSH "mkdir -p $backup ; mv -f $installation $systemctl_files $backup" 2> /dev/null
-    #$SSH "mkdir -p $backup ; mv -f $systemctl_files $backup" 2> /dev/null
 
-    log "INFO: in cleanup_hdfs_node(): reload daemon: $SSH systemctl daemon-reload"
+    log "INFO: in uninstall_hdfs(): reload daemon: $SSH systemctl daemon-reload"
     $SSH systemctl daemon-reload 2> $sshErr 
     if [ -s "$sshErr" ] ; then
-        log "ERROR: Exit cleanup_hdfs_node(): failed to reload daemon on $node. See $sshErr for details"
+        log "ERROR: Exit uninstall_hdfs(): failed to reload daemon on $node. See $sshErr for details"
         return 1
     fi
 
-    #Yuanguo: fast test
     $SSH ls $installation $systemctl_files > $sshErr 2>&1
-    #$SSH ls $systemctl_files > $sshErr 2>&1
     sed -i -e '/No such file or directory/ d' $sshErr
     if [ -s $sshErr ] ; then
-        log "ERROR: Exit cleanup_hdfs_node(): ssh failed or we failed to remove legacy hadoop installation on $node. See $sshErr for details"
+        log "ERROR: Exit uninstall_hdfs(): ssh failed or we failed to remove legacy hadoop installation on $node. See $sshErr for details"
         return 1
     fi
 
     for systemctl_cfg in $systemctl_cfgs ; do
-        log "INFO: in cleanup_hdfs_node(): $SSH systemctl status $systemctl_cfg"
+        log "INFO: in uninstall_hdfs(): $SSH systemctl status $systemctl_cfg"
         $SSH systemctl status $systemctl_cfg 2>&1 | grep -e "missing the instance name" -e "could not be found" -e "Loaded: not-found" > /dev/null 2>&1
         if [ $? -ne 0 ] ; then
-            log "ERROR: Exit cleanup_hdfs_node(): failed to check $systemctl_cfg on $node"
+            log "ERROR: Exit uninstall_hdfs(): failed to check $systemctl_cfg on $node"
             return 1
         fi
     done
 
     rm -f $sshErr
 
-    log "INFO: Exit cleanup_hdfs_node(): Success"
+    log "INFO: Exit uninstall_hdfs(): Success"
     return 0
 }
 
@@ -1109,10 +1124,11 @@ function check_hdfs_status()
 function deploy_hdfs()
 {
     local parsed_conf_dir=$1
-    local stop_after=$2
-    local zk_included=$3
+    local from=$2
+    local to=$3
+    local zk_included=$4
 
-    log "INFO: Enter deploy_hdfs(): parsed_conf_dir=$parsed_conf_dir stop_after=$stop_after zk_included=$zk_included"
+    log "INFO: Enter deploy_hdfs(): parsed_conf_dir=$parsed_conf_dir from=$from to=$to zk_included=$zk_included"
 
     local hdfs_conf_dir=$parsed_conf_dir/hdfs
     local hdfs_comm_cfg=$hdfs_conf_dir/common
@@ -1129,27 +1145,25 @@ function deploy_hdfs()
     fi
 
     #Step-1: generate configurations for each hdfs node;
-    gen_cfg_for_hdfs_nodes $hdfs_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_hdfs(): failed to generate configuration files for each node"
-        return 1
-    fi
-
-    if [ "X$stop_after" = "Xparse" ] ; then
-        log "INFO: Exit deploy_hdfs(): stop early because stop_after=$stop_after"
-        return 0
-    fi
-
-    #Step-2: if zookeeper is not included in this deployment, then zookeeper service must be available.
-    if [ "X$zk_included" != "Xtrue" ] ; then
-        check_zk_service_for_hdfs $hdfs_conf_dir
+    if [ $from -le 1 -a $to -ge 1 ] ; then
+        gen_cfg_for_hdfs_nodes $hdfs_conf_dir
         if [ $? -ne 0 ] ; then
-            log "ERROR: Exit deploy_hdfs(): zookeeper service is not availabe"
+            log "ERROR: Exit deploy_hdfs(): failed to generate configuration files for each node"
             return 1
         fi
     fi
 
-    #Step-3: check hdfs nodes (such as java environment), clean up hdfs nodes, and prepare (mount the disks, create the dirs)
+    #Step-2.a: if zookeeper is not included in this deployment, then zookeeper service must be available.
+    if [ $from -le 2 -a $to -ge 2 ] ; then
+        if [ "X$zk_included" != "Xtrue" ] ; then
+            check_zk_service_for_hdfs $hdfs_conf_dir
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit deploy_hdfs(): zookeeper service is not availabe"
+                return 1
+            fi
+        fi
+    fi
+
     for node in `cat $hdfs_nodes` ; do
         local node_cfg=$hdfs_comm_cfg
         [ -f $hdfs_conf_dir/$node ] && node_cfg=$hdfs_conf_dir/$node
@@ -1178,76 +1192,82 @@ function deploy_hdfs()
         installation=`echo $installation | sed -e 's/.tar.gz$//' -e 's/.tgz$//'`
         installation=$install_path/$installation
 
-        #check the node, such as java environment
-        log "INFO: in deploy_hdfs(): check hdfs node $node ..."
-        check_hdfs_node "$node" "$user" "$ssh_port" "$java_home"
-        if [ $? -ne 0 ] ; then
-            log "ERROR: Exit deploy_hdfs(): check_hdfs_node failed on $node"
-            return 1
+        #Step-2.b: check hdfs nodes (such as java environment)
+        if [ $from -le 2 -a $to -ge 2 ] ; then
+            log "INFO: in deploy_hdfs(): check hdfs node $node ..."
+            check_hdfs_node "$node" "$user" "$ssh_port" "$java_home"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit deploy_hdfs(): check_hdfs_node failed on $node"
+                return 1
+            fi
         fi
 
-        [ "X$stop_after" = "Xcheck" ] && continue
-
-        #clean up hdfs node
-        log "INFO: in deploy_hdfs(): clean up hdfs node $node ..."
-        cleanup_hdfs_node "$node" "$user" "$ssh_port" "$installation"
-        if [ $? -ne 0 ] ; then
-            log "ERROR: Exit deploy_hdfs(): cleanup_hdfs_node failed on $node"
-            return 1
+        #Step-3: stop hdfs processes 
+        if [ $from -le 3 -a $to -ge 3 ] ; then
+            log "INFO: in deploy_hdfs(): stop hdfs processes on $node ..."
+            stop_hdfs "$node" "$user" "$ssh_port"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit deploy_hdfs(): stop_hdfs failed on $node"
+                return 1
+            fi
         fi
 
-        [ "X$stop_after" = "Xclean" ] && continue
+        #Step-4: uninstall existing installation
+        if [ $from -le 4 -a $to -ge 4 ] ; then
+            log "INFO: in deploy_hdfs(): uninstall hdfs on $node ..."
+            uninstall_hdfs "$node" "$user" "$ssh_port" "$installation"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit deploy_hdfs(): uninstall_hdfs failed on $node"
+                return 1
+            fi
+        fi
 
-        #prepare environment
-        log "INFO: in deploy_hdfs(): prepare hdfs node $node ..."
-        prepare_hdfs_node "$hdfs_conf_dir" "$node"
-        if [ $? -ne 0 ] ; then
-            log "ERROR: Exit deploy_hdfs(): prepare_hdfs_node failed on $node"
-            return 1
+        #Step-5: prepare environment
+        if [ $from -le 5 -a $to -ge 5 ] ; then
+            log "INFO: in deploy_hdfs(): prepare hdfs node $node ..."
+            prepare_hdfs_node "$hdfs_conf_dir" "$node"
+            if [ $? -ne 0 ] ; then
+                log "ERROR: Exit deploy_hdfs(): prepare_hdfs_node failed on $node"
+                return 1
+            fi
         fi
     done
 
-    if [ "X$stop_after" = "Xcheck" -o "X$stop_after" = "Xclean" -o "X$stop_after" = "Xprepare" ] ; then
-        log "INFO: Exit deploy_hdfs(): stop early because stop_after=$stop_after"
-        return 0
-    fi
-
-    #Step-4: dispatch hdfs package to each node. Note that what's dispatched is the release-package, which doesn't
+    #Step-6: dispatch hdfs package to each node. Note that what's dispatched is the release-package, which doesn't
     #        contain our configurations. We will dispatch the configuation files later.
-    #Yuanguo: fast test
-    dispatch_hdfs_package $hdfs_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_hdfs(): failed to dispatch hadoop package to some node"
-        return 1
+    if [ $from -le 6 -a $to -ge 6 ] ; then
+        dispatch_hdfs_package $hdfs_conf_dir
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit deploy_hdfs(): failed to dispatch hadoop package to some node"
+            return 1
+        fi
     fi
 
-    #Step-5: dispatch configurations to each hdfs node;
-    dispatch_hdfs_configs $hdfs_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_hdfs(): failed to dispatch configuration files to each node"
-        return 1
+    #Step-7: dispatch configurations to each hdfs node;
+    if [ $from -le 7 -a $to -ge 7 ] ; then
+        dispatch_hdfs_configs $hdfs_conf_dir
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit deploy_hdfs(): failed to dispatch configuration files to each node"
+            return 1
+        fi
     fi
 
-    if [ "X$stop_after" = "Xinstall" ] ; then
-        log "INFO: Exit deploy_hdfs(): stop early because stop_after=$stop_after"
-        return 0
-    fi
+    #Step-8: start hdfs daemons on each hdfs node;
+    if [ $from -le 8 -a $to -ge 8 ] ; then
+        start_hdfs_daemons $hdfs_conf_dir
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit deploy_hdfs(): failed to start hdfs daemons on some node"
+            return 1
+        fi
 
-    #Step-6: start hdfs daemons on each hdfs node;
-    start_hdfs_daemons $hdfs_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_hdfs(): failed to start hdfs daemons on some node"
-        return 1
-    fi
+        log "INFO: in deploy_hdfs(): sleep 10 seconds before checking hdfs status ..."
+        sleep 10 
 
-    log "INFO: in deploy_hdfs(): sleep 10 seconds before checking hdfs status ..."
-    sleep 10 
-
-    #Step-7: check hdfs status;
-    check_hdfs_status $hdfs_conf_dir
-    if [ $? -ne 0 ] ; then
-        log "ERROR: Exit deploy_hdfs(): failed to check hdfs status"
-        return 1
+        check_hdfs_status $hdfs_conf_dir
+        if [ $? -ne 0 ] ; then
+            log "ERROR: Exit deploy_hdfs(): failed to check hdfs status"
+            return 1
+        fi
     fi
 
     log "INFO: Exit deploy_hdfs(): Success"
