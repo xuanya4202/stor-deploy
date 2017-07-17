@@ -190,8 +190,8 @@ function prepare_zk_node()
         return 1
     fi
 
-    log "INFO: $SSH rm -fr $dataDir/* $dataLogDir/* $logdir/* $piddir/*"
-    $SSH "rm -fr $dataDir/* $dataLogDir/*" 2> $sshErr #don't rm $install_path/* (e.g. /usr/local/)
+    log "INFO: $SSH find $dataDir | grep -v $dataDir\$ | grep -v myid | xargs rm -fr ; rm -fr $dataLogDir/*"
+    $SSH "find $dataDir | grep -v $dataDir\$ | grep -v myid | xargs rm -fr ; rm -fr $dataLogDir/*" 2> $sshErr #don't rm $install_path/* (e.g. /usr/local/)
     if [ -s $sshErr ] ; then
         log "ERROR: Exit prepare_zk_node(): failed to rm legacy data of zookeeper on $node. See $sshErr for details"
         return 1
