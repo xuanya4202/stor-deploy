@@ -1004,10 +1004,10 @@ function start_hdfs_daemons()
     return 0
 }
 
-function check_hdfs_status()
+function verify_hdfs_status()
 {
     local hdfs_conf_dir=$1
-    log "INFO: Enter check_hdfs_status(): hdfs_conf_dir=$hdfs_conf_dir"
+    log "INFO: Enter verify_hdfs_status(): hdfs_conf_dir=$hdfs_conf_dir"
 
     local hdfs_comm_cfg=$hdfs_conf_dir/common
     local hdfs_nodes=$hdfs_conf_dir/nodes
@@ -1027,7 +1027,7 @@ function check_hdfs_status()
         local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
         local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
 
-        log "INFO: in check_hdfs_status(): node=$node node_cfg=$node_cfg"
+        log "INFO: in verify_hdfs_status(): node=$node node_cfg=$node_cfg"
         log "INFO:        user=$user"
         log "INFO:        ssh_port=$ssh_port"
         log "INFO:        install_path=$install_path"
@@ -1046,19 +1046,19 @@ function check_hdfs_status()
         if [ $? -eq 0 ] ; then
             grep -w "NameNode" $java_processes > /dev/null 2>&1
             if [ $? -ne 0 ] ; then
-                log "ERROR: Exit check_hdfs_status(): NameNode was not found on $node. See $java_processes for details"
+                log "ERROR: Exit verify_hdfs_status(): NameNode was not found on $node. See $java_processes for details"
                 return 1
             fi
             grep -w "DFSZKFailoverController" $java_processes > /dev/null 2>&1
             if [ $? -ne 0 ] ; then
-                log "ERROR: Exit check_hdfs_status(): DFSZKFailoverController was not found on $node. See $java_processes for details"
+                log "ERROR: Exit verify_hdfs_status(): DFSZKFailoverController was not found on $node. See $java_processes for details"
                 return 1
             fi
 
             #$node is namenode, we run haadmin on it, checking status of all namenodes.
             local nns=`grep "hdfs-site:dfs.ha.namenodes" $node_cfg | cut -d '=' -f 2- | sed -e 's/,/ /g'`
             if [ -z "$nns" ] ; then
-                log "ERROR: Exit check_hdfs_status(): hdfs-site:dfs.ha.namenodes.{nameservice} was not configured corretly. See $node_cfg for details"
+                log "ERROR: Exit verify_hdfs_status(): hdfs-site:dfs.ha.namenodes.{nameservice} was not configured corretly. See $node_cfg for details"
                 return 1
             fi
 
@@ -1075,7 +1075,7 @@ function check_hdfs_status()
                     if [ $? -eq 0 ] ; then
                         standby_found="true"
                     else
-                        log "ERROR: Exit check_hdfs_status(): failed to get service state of $nn. See $sshErr for details"
+                        log "ERROR: Exit verify_hdfs_status(): failed to get service state of $nn. See $sshErr for details"
                         return 1
                     fi
                 fi
@@ -1083,13 +1083,13 @@ function check_hdfs_status()
                 log "INFO: $SSH $installation/bin/hdfs haadmin -checkHealth $nn && echo yes"
                 $SSH "$installation/bin/hdfs haadmin -checkHealth $nn && echo yes" | grep -w "yes" > /dev/null 2>&1
                 if [ $? -ne 0 ] ; then
-                    log "ERROR: Exit check_hdfs_status(): $nn is not healthy."
+                    log "ERROR: Exit verify_hdfs_status(): $nn is not healthy."
                     return 1
                 fi
             done
 
             if [ -z "$standby_found" -o -z "$active_found" ] ; then
-                log "ERROR: Exit check_hdfs_status(): didn't find active namenode or standby namenode. See $sshErr for details"
+                log "ERROR: Exit verify_hdfs_status(): didn't find active namenode or standby namenode. See $sshErr for details"
                 return 1
             fi
         fi
@@ -1099,7 +1099,7 @@ function check_hdfs_status()
         if [ $? -eq 0 ] ; then
             grep -w "JournalNode" $java_processes > /dev/null 2>&1
             if [ $? -ne 0 ] ; then
-                log "ERROR: Exit check_hdfs_status(): JournalNode was not found on $node. See $java_processes for details"
+                log "ERROR: Exit verify_hdfs_status(): JournalNode was not found on $node. See $java_processes for details"
                 return 1
             fi
         fi
@@ -1109,7 +1109,7 @@ function check_hdfs_status()
         if [ $? -eq 0 ] ; then
             grep -w "DataNode" $java_processes > /dev/null 2>&1
             if [ $? -ne 0 ] ; then
-                log "ERROR: Exit check_hdfs_status(): DataNode was not found on $node. See $java_processes for details"
+                log "ERROR: Exit verify_hdfs_status(): DataNode was not found on $node. See $java_processes for details"
                 return 1
             fi
         fi
@@ -1117,7 +1117,7 @@ function check_hdfs_status()
 
     rm -f $sshErr $java_processes
     
-    log "INFO: Exit check_hdfs_status(): Success"
+    log "INFO: Exit verify_hdfs_status(): Success"
     return 0
 }
 
@@ -1260,12 +1260,15 @@ function deploy_hdfs()
             return 1
         fi
 
-        log "INFO: in deploy_hdfs(): sleep 10 seconds before checking hdfs status ..."
+        log "INFO: in deploy_hdfs(): sleep 10 seconds ..."
         sleep 10 
+    fi
 
-        check_hdfs_status $hdfs_conf_dir
+    #Step-9: verify if processes are running properly;
+    if [ $from -le 9 -a $to -ge 9 ] ; then
+        verify_hdfs_status $hdfs_conf_dir
         if [ $? -ne 0 ] ; then
-            log "ERROR: Exit deploy_hdfs(): failed to check hdfs status"
+            log "ERROR: Exit deploy_hdfs(): failed to verify hdfs status"
             return 1
         fi
     fi

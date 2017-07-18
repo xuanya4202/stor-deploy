@@ -632,11 +632,11 @@ function start_zk_servers()
     return 0
 }
 
-function check_zk_status()
+function verify_zk_status()
 {
     local zk_conf_dir=$1
 
-    log "INFO: Enter check_zk_status(): zk_conf_dir=$zk_conf_dir"
+    log "INFO: Enter verify_zk_status(): zk_conf_dir=$zk_conf_dir"
 
     local zk_comm_cfg=$zk_conf_dir/common
     local zk_nodes=$zk_conf_dir/nodes
@@ -659,15 +659,15 @@ function check_zk_status()
 
         local succ=""
         for i in {1..5} ; do
-            log "INFO: in check_zk_status(): get mode of zookeeper service: $SSH $installation/bin/zkServer.sh status"
+            log "INFO: in verify_zk_status(): get mode of zookeeper service: $SSH $installation/bin/zkServer.sh status"
             local mode=`$SSH $installation/bin/zkServer.sh status 2> /dev/null | grep "Mode:" | cut -d ' ' -f 2`
             if [ "X$mode" = "Xleader" ] ; then
-                log "INFO: in check_zk_status(): mode of zookeeper on $node: $mode"
+                log "INFO: in verify_zk_status(): mode of zookeeper on $node: $mode"
                 leader_found="true"
                 succ="true"
                 break
             elif [ "X$mode" = "Xfollower" ] ; then
-                log "INFO: in check_zk_status(): mode of zookeeper on $node: $mode"
+                log "INFO: in verify_zk_status(): mode of zookeeper on $node: $mode"
                 succ="true"
                 break
             fi
@@ -675,17 +675,17 @@ function check_zk_status()
         done
 
         if [ -z "$succ" ] ; then
-            log "ERROR: Exit check_zk_status(): failed to get mode of zookeeper service on $node"
+            log "ERROR: Exit verify_zk_status(): failed to get mode of zookeeper service on $node"
             return 1
         fi
     done
 
     if [ -z "$leader_found" ] ; then
-        log "ERROR: Exit check_zk_status(): didn't found leader on all zookeeper nodes"
+        log "ERROR: Exit verify_zk_status(): didn't found leader on all zookeeper nodes"
         return 1
     fi
 
-    log "INFO: Exit check_zk_status(): Success"
+    log "INFO: Exit verify_zk_status(): Success"
     return 0
 }
 
@@ -830,9 +830,15 @@ function deploy_zk()
             return 1
         fi
 
-        check_zk_status $zk_conf_dir
+        log "INFO: in deploy_zk(): sleep 5 seconds ..."
+        sleep 5 
+    fi
+
+    #Step-9: verify if processes are running properly;
+    if [ $from -le 9 -a $to -ge 9 ] ; then
+        verify_zk_status $zk_conf_dir
         if [ $? -ne 0 ] ; then
-            log "ERROR: Exit deploy_zk(): failed to check zookeeper status on each node"
+            log "ERROR: Exit deploy_zk(): failed to verify zookeeper status on each node"
             return 1
         fi
     fi

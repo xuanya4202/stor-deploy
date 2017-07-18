@@ -807,10 +807,10 @@ function start_hbase_daemons()
     return 0
 }
 
-function check_hbase_status()
+function verify_hbase_status()
 {
     local hbase_conf_dir=$1
-    log "INFO: Enter check_hbase_status(): hbase_conf_dir=$hbase_conf_dir"
+    log "INFO: Enter verify_hbase_status(): hbase_conf_dir=$hbase_conf_dir"
 
     local hbase_comm_cfg=$hbase_conf_dir/common
     local hbase_nodes=$hbase_conf_dir/nodes
@@ -829,7 +829,7 @@ function check_hbase_status()
         local install_path=`grep "install_path=" $node_cfg | cut -d '=' -f 2-`
         local package=`grep "package=" $node_cfg | cut -d '=' -f 2-`
 
-        log "INFO: in check_hbase_status(): node=$node node_cfg=$node_cfg"
+        log "INFO: in verify_hbase_status(): node=$node node_cfg=$node_cfg"
         log "INFO:        user=$user"
         log "INFO:        ssh_port=$ssh_port"
         log "INFO:        install_path=$install_path"
@@ -848,7 +848,7 @@ function check_hbase_status()
         if [ $? -eq 0 ] ; then
             grep -w "HMaster" $java_processes > /dev/null 2>&1
             if [ $? -ne 0 ] ; then
-                log "ERROR: Exit check_hbase_status(): HMaster was not found on $node. See $java_processes for details"
+                log "ERROR: Exit verify_hbase_status(): HMaster was not found on $node. See $java_processes for details"
                 return 1
             fi
         fi
@@ -858,7 +858,7 @@ function check_hbase_status()
         if [ $? -eq 0 ] ; then
             grep -w "HRegionServer" $java_processes > /dev/null 2>&1
             if [ $? -ne 0 ] ; then
-                log "ERROR: Exit check_hbase_status(): HRegionServer was not found on $node. See $java_processes for details"
+                log "ERROR: Exit verify_hbase_status(): HRegionServer was not found on $node. See $java_processes for details"
                 return 1
             fi
         fi
@@ -866,14 +866,14 @@ function check_hbase_status()
         #Step-3: check thrift2
         grep -w "ThriftServer" $java_processes > /dev/null 2>&1
         if [ $? -ne 0 ] ; then
-            log "ERROR: Exit check_hbase_status(): ThriftServer was not found on $node. See $java_processes for details"
+            log "ERROR: Exit verify_hbase_status(): ThriftServer was not found on $node. See $java_processes for details"
             return 1
         fi
     done
 
     rm -f $sshErr $java_processes
     
-    log "INFO: Exit check_hbase_status(): Success"
+    log "INFO: Exit verify_hbase_status(): Success"
     return 0
 }
 
@@ -1016,12 +1016,15 @@ function deploy_hbase()
             return 1
         fi
 
-        log "INFO: in deploy_hbase(): sleep 10 seconds before checking hbase status ..."
+        log "INFO: in deploy_hbase(): sleep 10 seconds ..."
         sleep 10 
+    fi
 
-        check_hbase_status $hbase_conf_dir
+    #Step-9: verify if processes are running properly;
+    if [ $from -le 9 -a $to -ge 9 ] ; then
+        verify_hbase_status $hbase_conf_dir
         if [ $? -ne 0 ] ; then
-            log "ERROR: Exit deploy_hbase(): failed to check hbase status"
+            log "ERROR: Exit deploy_hbase(): failed to verify hbase status"
             return 1
         fi
     fi

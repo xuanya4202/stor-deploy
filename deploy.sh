@@ -44,6 +44,7 @@ function usage()
     echo "                            install_pkg : dispatch software packages"
     echo "                            install_cfg : dispatch the config files"
     echo "                            run         : start up the new installation"
+    echo "                            verify      : verify if all processes are running properly"
     echo "                      by default {from}=parse"
     echo "                      by default {to}=run"
     echo "    -u upgrade-what : only used when operation=upgrade"
@@ -131,9 +132,9 @@ if [ -z "$operation" ] ; then
 fi
 
 if [ X"$operation" == "Xdeploy" ] ; then
-    steps=("parse" "config" "check" "stop" "uninstall" "prepare" "install_pkg" "install_cfg" "run")
+    steps=("parse" "config" "check" "stop" "uninstall" "prepare" "install_pkg" "install_cfg" "run" "verify")
     [ -z "$from" ] && from=parse
-    [ -z "$to" ] && to=run
+    [ -z "$to" ] && to=verify
     i=0
     n=${#steps[@]}
     found=0
