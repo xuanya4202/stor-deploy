@@ -49,10 +49,11 @@ function stop_zk()
     local SSH="ssh -p $ssh_port $user@$node"
     local sshErr=`mktemp --suffix=-stor-deploy.zk_stop`
 
-    #Step-1: try to stop running zookeeper process if found.
     local succ=""
     local zk_pid=""
-    for r in {1..4} ; do
+
+    #Step-1: stop
+    for r in {1..10} ; do
         zk_pid=`$SSH jps 2> $sshErr | grep QuorumPeerMain | cut -d ' ' -f 1`
         if [ -s "$sshErr" ] ; then
             log "ERROR: Exit stop_zk(): failed to find running zookeepr on $node. See $sshErr for details"
@@ -68,14 +69,34 @@ function stop_zk()
             fi
         fi
 
-        log "INFO: in stop_zk(): try to stop zookeeper by systemctl: $SSH systemctl stop zookeeper"
-        $SSH systemctl stop zookeeper 2> /dev/null
-        sleep 2
-
-        log "INFO: in stop_zk(): try to stop zookeeper by kill"
-        $SSH kill -9 $zk_pid 2> /dev/null
+        log "INFO: $SSH systemctl stop zookeeper retry=$r"
+        $SSH "systemctl stop zookeeper" > /dev/null 2>&1
         sleep 2
     done
+
+    #Step-2: try all means to stop zookeeper if Step-1 failed 
+    if [ "X$succ" != "Xtrue" ] ; then
+        for r in {1..10} ; do
+            zk_pid=`$SSH jps 2> $sshErr | grep QuorumPeerMain | cut -d ' ' -f 1`
+            if [ -s "$sshErr" ] ; then
+                log "ERROR: Exit stop_zk(): failed to find running zookeepr on $node. See $sshErr for details"
+                return 1
+            fi
+
+            if [ -z "$zk_pid" ] ; then
+                $SSH "systemctl status zookeepr" | grep "Active: active (running)" > /dev/null 2>&1
+                if [ $? -ne 0 ] ; then # didn't find
+                    log "INFO: in stop_zk(): didn't find running zookeepr on $node"
+                    succ="true"
+                    break
+                fi
+            fi
+
+            log "INFO: in stop_zk(): try to stop zookeeper by kill"
+            $SSH kill -9 $zk_pid 2> /dev/null
+            sleep 2
+        done
+    fi
 
     if [ "X$succ" != "Xtrue" ] ; then
         log "ERROR: Exit stop_zk(): failed to stop zookeeper on $onde. zk_pid=$zk_pid"

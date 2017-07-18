@@ -322,11 +322,12 @@ function stop_hbase()
     local SSH="ssh -p $ssh_port $user@$node"
     local sshErr=`mktemp --suffix=-stor-deploy.hbase_stop`
 
-    local systemctl_cfgs="hbase@master.service hbase@regionserver.service hbase@thrift2.service hbase@.service hbase.target"
-
-    #Step-1: try to stop running hbase processes if found.
     local succ=""
     local hbase_pids=""
+
+    local systemctl_cfgs="hbase@master.service hbase@regionserver.service hbase@thrift2.service hbase@.service hbase.target"
+
+    #Step-1: stop
     for r in {1..10} ; do
         hbase_pids=`$SSH jps 2> $sshErr | grep -e ThriftServer -e HRegionServer -e HMaster | cut -d ' ' -f 1`
         if [ -s "$sshErr" ] ; then
@@ -343,24 +344,48 @@ function stop_hbase()
             fi
         fi
 
-        log "INFO: in stop_hbase(): try to stop hbase processes by systemctl"
-
-        local stop_cmds=""
-        for systemctl_cfg in $systemctl_cfgs ; do
-            stop_cmds="systemctl stop $systemctl_cfg ; $stop_cmds"
-        done
-
-        log "INFO: $SSH $stop_cmds"
-        $SSH "$stop_cmds" 2> /dev/null
-        sleep 5
-
-        log "INFO: in stop_hbase(): try to stop hbase processes by kill"
-        for hbase_pid in $hbase_pids ; do
-            log "INFO: $SSH kill -9 $hbase_pid"
-            $SSH kill -9 $hbase_pid 2> /dev/null
-        done
-        sleep 5
+        log "INFO: $SSH systemctl stop hbase.target retry=$r"
+        $SSH "systemctl stop hbase.target" > /dev/null 2>&1
+        sleep 2
     done
+
+    #Step-2: try all means to stop hbase if Step-1 failed 
+    if [ "X$succ" != "Xtrue" ] ; then
+        for r in {1..10} ; do
+            hbase_pids=`$SSH jps 2> $sshErr | grep -e ThriftServer -e HRegionServer -e HMaster | cut -d ' ' -f 1`
+            if [ -s "$sshErr" ] ; then
+                log "ERROR: Exit stop_hbase(): failed to find hbase processes on $node. See $sshErr for details"
+                return 1
+            fi
+
+            if [ -z "$hbase_pids" ] ; then
+                $SSH "systemctl status $systemctl_cfgs" | grep "Active: active (running)" > /dev/null 2>&1
+                if [ $? -ne 0 ] ; then # didn't find
+                    log "INFO: in stop_hbase(): didn't find hbase processes on $node"
+                    succ="true"
+                    break
+                fi
+            fi
+
+            log "INFO: in stop_hbase(): try to stop hbase processes by systemctl"
+
+            local stop_cmds=""
+            for systemctl_cfg in $systemctl_cfgs ; do
+                stop_cmds="systemctl stop $systemctl_cfg ; $stop_cmds"
+            done
+
+            log "INFO: $SSH $stop_cmds"
+            $SSH "$stop_cmds" 2> /dev/null
+            sleep 5
+
+            log "INFO: in stop_hbase(): try to stop hbase processes by kill"
+            for hbase_pid in $hbase_pids ; do
+                log "INFO: $SSH kill -9 $hbase_pid"
+                $SSH kill -9 $hbase_pid 2> /dev/null
+            done
+            sleep 5
+        done
+    fi
 
     if [ "X$succ" != "Xtrue" ] ; then
         log "ERROR: Exit stop_hbase(): failed to stop hbase processes on $node hbase_pids=$hbase_pids"

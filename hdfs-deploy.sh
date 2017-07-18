@@ -347,11 +347,12 @@ function stop_hdfs()
     local SSH="ssh -p $ssh_port $user@$node"
     local sshErr=`mktemp --suffix=-stor-deploy.hdfs_stop`
 
+    local hdfs_pids=""
+    local succ=""
+
     local systemctl_cfgs="hadoop@journalnode.service hadoop@zkfc.service hadoop@namenode.service hadoop@datanode.service hadoop@.service hadoop.target"
 
-    #Step-1: try to stop running hdfs processes if found.
-    local succ=""
-    local hdfs_pids=""
+    #Step-1: stop
     for r in {1..10} ; do
         hdfs_pids=`$SSH jps 2> $sshErr | grep -e NameNode -e DataNode -e DFSZKFailoverController -e JournalNode | cut -d ' ' -f 1`
         if [ -s "$sshErr" ] ; then
@@ -368,24 +369,48 @@ function stop_hdfs()
             fi
         fi
 
-        log "INFO: in stop_hdfs(): try to stop hdfs processes by systemctl"
-
-        local stop_cmds=""
-        for systemctl_cfg in $systemctl_cfgs ; do
-            stop_cmds="systemctl stop $systemctl_cfg ; $stop_cmds"
-        done
-
-        log "INFO: $SSH $stop_cmds"
-        $SSH "$stop_cmds" 2> /dev/null
-        sleep 5
-
-        log "INFO: in stop_hdfs(): try to stop hdfs processes by kill"
-        for hdfs_pid in $hdfs_pids ; do
-            log "INFO: $SSH kill -9 $hdfs_pid"
-            $SSH kill -9 $hdfs_pid 2> /dev/null
-        done
-        sleep 5
+        log "INFO: $SSH systemctl stop hadoop.target retry=$r"
+        $SSH "systemctl stop hadoop.target" > /dev/null 2>&1
+        sleep 2
     done
+
+    #Step-2: try all means to stop hdfs if Step-1 failed 
+    if [ "X$succ" != "Xtrue" ] ; then
+        for r in {1..10} ; do
+            hdfs_pids=`$SSH jps 2> $sshErr | grep -e NameNode -e DataNode -e DFSZKFailoverController -e JournalNode | cut -d ' ' -f 1`
+            if [ -s "$sshErr" ] ; then
+                log "ERROR: Exit stop_hdfs(): failed to find hdfs processes on $node. See $sshErr for details"
+                return 1
+            fi
+
+            if [ -z "$hdfs_pids" ] ; then
+                $SSH "systemctl status $systemctl_cfgs" | grep "Active: active (running)" > /dev/null 2>&1
+                if [ $? -ne 0 ] ; then # didn't find
+                    log "INFO: in stop_hdfs(): didn't find hdfs processes on $node"
+                    succ="true"
+                    break
+                fi
+            fi
+
+            log "INFO: in stop_hdfs(): try to stop hdfs processes by systemctl"
+
+            local stop_cmds=""
+            for systemctl_cfg in $systemctl_cfgs ; do
+                stop_cmds="systemctl stop $systemctl_cfg ; $stop_cmds"
+            done
+
+            log "INFO: $SSH $stop_cmds"
+            $SSH "$stop_cmds" 2> /dev/null
+            sleep 2
+
+            log "INFO: in stop_hdfs(): try to stop hdfs processes by kill"
+            for hdfs_pid in $hdfs_pids ; do
+                log "INFO: $SSH kill -9 $hdfs_pid"
+                $SSH kill -9 $hdfs_pid 2> /dev/null
+            done
+            sleep 2
+        done
+    fi
 
     if [ "X$succ" != "Xtrue" ] ; then
         log "ERROR: Exit stop_hdfs(): failed to stop hdfs processes on $node hdfs_pids=$hdfs_pids"
