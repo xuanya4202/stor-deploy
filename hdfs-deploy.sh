@@ -1040,7 +1040,6 @@ function verify_hdfs_status()
     local hdfs_data_nodes=$hdfs_conf_dir/data-nodes
     local hdfs_journal_nodes=$hdfs_conf_dir/journal-nodes
 
-    local sshErr=`mktemp --suffix=-stor-deploy.chk_hdfs`
     local java_processes=`mktemp --suffix=-stor-deploy.chk_hdfs_jps`
 
     for node in `cat $hdfs_nodes` ; do
@@ -1091,22 +1090,26 @@ function verify_hdfs_status()
             local standby_found=""
             for nn in $nns ; do
                 log "INFO: $SSH $installation/bin/hdfs haadmin -getServiceState $nn"
-                $SSH "$installation/bin/hdfs haadmin -getServiceState $nn" > $sshErr 2>&1
-                grep -i -w "Active" $sshErr > /dev/null 2>&1
+                local svcState=`$SSH "$installation/bin/hdfs haadmin -getServiceState $nn" 2>&1`
+                log "INFO: service state of $nn: $svcState"
+
+                echo $svcState | grep -i -w "Active" > /dev/null 2>&1
                 if [ $? -eq 0 ] ; then
                     active_found="true"
                 else
-                    grep -i -w "Standby" $sshErr > /dev/null 2>&1
+                    echo $svcState | grep -i -w "Standby" > /dev/null 2>&1
                     if [ $? -eq 0 ] ; then
                         standby_found="true"
                     else
-                        log "ERROR: Exit verify_hdfs_status(): failed to get service state of $nn. See $sshErr for details"
+                        log "ERROR: Exit verify_hdfs_status(): failed to get service state of $nn. svcState=$svcState"
                         return 1
                     fi
                 fi
 
-                log "INFO: $SSH $installation/bin/hdfs haadmin -checkHealth $nn && echo yes"
-                $SSH "$installation/bin/hdfs haadmin -checkHealth $nn && echo yes" | grep -w "yes" > /dev/null 2>&1
+                log "INFO: $SSH $installation/bin/hdfs haadmin -checkHealth $nn && echo yes || echo no"
+                local healthy=`$SSH "$installation/bin/hdfs haadmin -checkHealth $nn && echo yes || echo no"`
+                log "INFO: is $nn healthy: $healthy"
+                echo $healthy | grep -w "yes" > /dev/null 2>&1
                 if [ $? -ne 0 ] ; then
                     log "ERROR: Exit verify_hdfs_status(): $nn is not healthy."
                     return 1
@@ -1114,7 +1117,7 @@ function verify_hdfs_status()
             done
 
             if [ -z "$standby_found" -o -z "$active_found" ] ; then
-                log "ERROR: Exit verify_hdfs_status(): didn't find active namenode or standby namenode. See $sshErr for details"
+                log "ERROR: Exit verify_hdfs_status(): didn't find active namenode or standby namenode."
                 return 1
             fi
         fi
@@ -1140,7 +1143,7 @@ function verify_hdfs_status()
         fi
     done
 
-    rm -f $sshErr $java_processes
+    rm -f $java_processes
     
     log "INFO: Exit verify_hdfs_status(): Success"
     return 0
